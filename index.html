@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Elftal</title>
+<meta name="theme-color" content="#14532d">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+<style>
+:root{
+  --bg:#f4f6f3; --card:#fff; --ink:#15211a; --muted:#64716a; --line:#e2e7e3;
+  --brand:#166534; --brand-ink:#fff; --brand-soft:#dcfce7;
+  --a:#334155; --a-soft:#e2e8f0; --b:#c2410c; --b-soft:#ffedd5;
+  --win:#15803d; --draw:#a16207; --loss:#b91c1c;
+  --radius:14px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0e1411; --card:#17201b; --ink:#e7efe9; --muted:#93a39a; --line:#26322b;
+    --brand:#22c55e; --brand-ink:#05200f; --brand-soft:#123321;
+    --a:#cbd5e1; --a-soft:#243041; --b:#fb923c; --b-soft:#3a2416;
+    --win:#4ade80; --draw:#facc15; --loss:#f87171;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:84px}
+header{background:var(--brand);color:var(--brand-ink);padding:16px 16px 14px}
+@media (prefers-color-scheme: dark){header{background:#123321;color:var(--ink)}}
+header h1{margin:0;font-size:20px;letter-spacing:.2px}
+header .sub{font-size:13px;opacity:.8}
+main{max-width:640px;margin:0 auto;padding:14px 16px}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;max-width:160px;background:none;border:0;color:var(--muted);padding:9px 4px 10px;font:inherit;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px}
+nav button .i{font-size:20px;line-height:1}
+nav button.on{color:var(--brand);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+h2{font-size:16px;margin:0 0 10px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.spread{justify-content:space-between}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:9px 14px;font:inherit;cursor:pointer}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:600}
+.btn.danger{color:var(--loss)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.sm{padding:5px 10px;font-size:13px}
+input,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.players{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.chip{display:flex;align-items:center;justify-content:space-between;gap:6px;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;cursor:pointer;user-select:none;font-weight:500}
+.chip.on{background:var(--brand-soft);border-color:var(--brand)}
+.chip .dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);flex:none}
+.chip.on .dot{background:var(--brand);border-color:var(--brand)}
+.teams{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.team{border-radius:12px;padding:10px 12px}
+.team.a{background:var(--a-soft)} .team.b{background:var(--b-soft)}
+.team h3{margin:0 0 6px;font-size:14px}
+.team.a h3{color:var(--a)} .team.b h3{color:var(--b)}
+.team ul{list-style:none;margin:0;padding:0}
+.team li{padding:2px 0;display:flex;justify-content:space-between;gap:6px}
+.team li.mv{cursor:pointer;border-radius:6px;padding:4px 6px;margin:0 -6px}
+.team li.mv:hover{background:rgba(127,127,127,.12)}
+.joker{margin-top:10px;padding:8px 12px;border-radius:10px;border:1px dashed var(--line);font-size:14px}
+.sugg{border:2px solid transparent;cursor:pointer}
+.sugg.sel{border-color:var(--brand)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:7px 4px;text-align:right;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th{font-size:12px;color:var(--muted);font-weight:600}
+th:nth-child(2),td:nth-child(2){text-align:left}
+td:first-child,th:first-child{width:28px;color:var(--muted);text-align:left}
+td.pts{font-weight:700}
+.score{display:flex;align-items:center;justify-content:center;gap:10px;margin:8px 0}
+.score input{width:64px;text-align:center;font-size:24px;font-weight:700}
+.match{border-top:1px solid var(--line);padding:10px 0}
+.match:first-of-type{border-top:0}
+.res{font-weight:700;font-size:17px;font-variant-numeric:tabular-nums}
+.tag{font-size:12px;padding:1px 8px;border-radius:99px;background:var(--bg);border:1px solid var(--line)}
+.pick{display:grid;grid-template-columns:1fr auto auto;gap:4px 8px;align-items:center}
+.pick label{display:contents}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--card);color:var(--muted);padding:4px 10px;font:inherit;font-size:13px;cursor:pointer}
+.seg button.onA{background:var(--a-soft);color:var(--a);font-weight:600}
+.seg button.onB{background:var(--b-soft);color:var(--b);font-weight:600}
+.seg button.onJ{background:var(--brand-soft);color:var(--brand);font-weight:600}
+#toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:99px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+#toast.show{opacity:1}
+.status{font-size:12px}
+.err{color:var(--loss)}
+.empty{text-align:center;padding:24px 8px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚽ Elftal</h1>
+  <div class="sub" id="status">Laden…</div>
+</header>
+<main id="app"></main>
+<nav id="nav">
+  <button data-tab="aanwezig"><span class="i">✅</span>Aanwezig</button>
+  <button data-tab="suggestions"><span class="i">🔀</span>Teams</button>
+  <button data-tab="uitslag"><span class="i">📝</span>Uitslag</button>
+  <button data-tab="stand"><span class="i">🏆</span>Stand</button>
+</nav>
+<div id="toast"></div>
+
+<script>
+const SB_URL = "https://brdatkcvtpcvcxiqueeb.supabase.co";
+const SB_KEY = "sb_publishable_O4fCFeacXsXpcwvGi-Z9Mw_nzpOCU6q";
+const ROW_ID = 1;
+const TEAM_A = "Zonder hesje", TEAM_B = "Met hesje";
+const MONTHS = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov","dec"];
+
+let state = null;
+let tab = "aanwezig";
+let suggestions = [];
+let selSugg = 0;
+let editIdx = null;      // index in uitslagen being edited
+let draft = null;        // uitslag form draft
+
+/* ---------- Supabase (REST) ---------- */
+const H = {apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json"};
+async function fetchState(){
+  const r = await fetch(`${SB_URL}/rest/v1/elftal_state?id=eq.${ROW_ID}&select=data`, {headers: H});
+  if(!r.ok) throw new Error("Laden mislukt (" + r.status + ")");
+  const rows = await r.json();
+  if(!rows.length) throw new Error("Geen data gevonden");
+  return normalize(JSON.parse(rows[0].data));
+}
+function normalize(s){
+  s.players ??= []; s.uitslagen ??= []; s.lastTeams ??= []; s.avoidPairs ??= [];
+  s.matches ??= []; s.seasons ??= [];
+  return s;
+}
+// Haal altijd eerst de nieuwste versie op, pas de wijziging toe en sla op.
+let queue = Promise.resolve();
+function mutate(fn, msg){ const run = queue.then(()=>doMutate(fn, msg)); queue = run.catch(()=>{}); return run; }
+async function doMutate(fn, msg){
+  setStatus("Opslaan…");
+  try{
+    const fresh = await fetchState();
+    fn(fresh);
+    const r = await fetch(`${SB_URL}/rest/v1/elftal_state?id=eq.${ROW_ID}`, {
+      method: "PATCH", headers: {...H, Prefer: "return=minimal"},
+      body: JSON.stringify({data: JSON.stringify(fresh)})
+    });
+    if(!r.ok) throw new Error("Opslaan mislukt (" + r.status + ")");
+    state = fresh;
+    setStatus("Opgeslagen");
+    if(msg) toast(msg);
+    render();
+    return true;
+  }catch(e){
+    setStatus(e.message, true); toast(e.message);
+    return false;
+  }
+}
+
+/* ---------- Helpers ---------- */
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(t){const el=document.getElementById("toast");el.textContent=t;el.classList.add("show");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("show"),2200);}
+function setStatus(t, err){const el=document.getElementById("status");el.textContent=t;el.className="sub"+(err?" err":"");}
+function todayISO(){const d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);}
+function fmtDate(iso){const [y,m,d]=iso.split("-").map(Number);return `${d} ${MONTHS[m-1]} ${y}`;}
+
+/* ---------- Stand ---------- */
+function computeStats(s){
+  const st = {};
+  const get = n => st[n] ??= {name:n, w:0, g:0, v:0, gs:0, pts:0};
+  for(const u of s.uitslagen){
+    const a = +u.scoreA, b = +u.scoreB;
+    for(const [team, mine, theirs] of [[u.teamA||[], a, b], [u.teamB||[], b, a]]){
+      for(const n of team){
+        const p = get(n); p.gs++;
+        if(mine > theirs) p.w++; else if(mine === theirs) p.g++; else p.v++;
+      }
+    }
+    if(u.joker){ // joker krijgt het resultaat van het winnende team
+      const p = get(u.joker); p.gs++;
+      if(a === b) p.g++; else p.w++;
+    }
+  }
+  for(const p of Object.values(st)) p.pts = p.w*3 + p.g;
+  return st;
+}
+function standing(s){
+  return Object.values(computeStats(s)).sort((x,y)=> y.pts-x.pts || (y.pts/y.gs)-(x.pts/x.gs) || y.w-x.w || x.name.localeCompare(y.name));
+}
+
+/* ---------- Teams indelen ---------- */
+function strength(stats, n){
+  const p = stats[n]; const k = 2, prior = 1.5;      // nieuwe spelers starten op gemiddeld niveau
+  return p ? (p.pts + prior*k)/(p.gs + k) : prior;
+}
+function makeSuggestions(present, joker, count=3){
+  const stats = computeStats(state);
+  let pool = present.filter(n => n !== joker);
+  const avoid = state.avoidPairs || [];
+  const seen = new Set(), out = [];
+  const tries = 4000;
+  const half = Math.floor(pool.length/2);
+  const cands = [];
+  for(let t=0;t<tries;t++){
+    const sh = [...pool].sort(()=>Math.random()-.5);
+    const A = sh.slice(0, half).sort(), B = sh.slice(half).sort();
+    const key = A.join("|") < B.join("|") ? A.join("|")+"#"+B.join("|") : B.join("|")+"#"+A.join("|");
+    if(seen.has(key)) continue; seen.add(key);
+    const sa = A.reduce((t,n)=>t+strength(stats,n),0), sb = B.reduce((t,n)=>t+strength(stats,n),0);
+    let pen = Math.abs(sa - sb);
+    for(const pr of avoid){ const [x,y] = Array.isArray(pr) ? pr : [pr.a, pr.b];
+      if((A.includes(x)&&A.includes(y)) || (B.includes(x)&&B.includes(y))) pen += 5; }
+    cands.push({A, B, sa, sb, pen});
+  }
+  cands.sort((x,y)=>x.pen-y.pen);
+  for(const c of cands){ if(out.length>=count) break; out.push(c); }
+  return out;
+}
+
+/* ---------- Render ---------- */
+function render(){
+  document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on", b.dataset.tab===tab));
+  const app = document.getElementById("app");
+  if(!state){ app.innerHTML = `<div class="empty">Laden…</div>`; return; }
+  app.innerHTML = ({aanwezig: viewAanwezig, suggestions: viewTeams, uitslag: viewUitslag, stand: viewStand}[tab])();
+}
+
+function viewAanwezig(){
+  const pres = state.players.filter(p=>p.present).length;
+  return `
+  <div class="card">
+    <div class="row spread"><h2>Wie is er? <span class="muted small">${pres} van ${state.players.length}</span></h2>
+      <button class="btn sm" onclick="resetPresence()">Iedereen afmelden</button></div>
+    <div class="players">
+      ${state.players.map((p,i)=>`<div class="chip ${p.present?"on":""}" onclick="togglePresent(${i})"><span>${esc(p.name)}</span><span class="dot"></span></div>`).join("")}
+    </div>
+  </div>
+  <div class="card">
+    <h2>Speler toevoegen</h2>
+    <form class="row" onsubmit="addPlayer(event)">
+      <input id="newName" placeholder="Naam" autocomplete="off" style="flex:1;min-width:140px">
+      <button class="btn primary">Toevoegen</button>
+    </form>
+    <details style="margin-top:12px"><summary class="muted small">Speler verwijderen</summary>
+      <div class="row" style="margin-top:8px">
+        <select id="delName">${state.players.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
+        <button class="btn danger sm" onclick="removePlayer()">Verwijderen</button>
+      </div>
+      <p class="muted small">Uitslagen en punten van deze speler blijven bewaard.</p>
+    </details>
+  </div>
+  ${pres>=2?`<button class="btn primary" style="width:100%" onclick="go('suggestions')">Teams maken met ${pres} spelers →</button>`:""}`;
+}
+
+function teamBox(cls, name, players, stats, ctx){
+  return `<div class="team ${cls}"><h3>${esc(name)}</h3><ul>${players.map(n=>`<li ${ctx?`class="mv" data-ctx="${ctx}" data-name="${esc(n)}"`:""}><span>${ctx?"⇄ ":""}${esc(n)}</span><span class="muted small">${stats[n]?stats[n].pts:0}</span></li>`).join("")}</ul></div>`;
+}
+let editCur = null;   // kopie van huidige teams tijdens wisselen
+function teamSum(list, stats){ return list.reduce((t,n)=>t+strength(stats,n),0); }
+function moveIn(A, B, n){ const i=A.indexOf(n); if(i>=0){ A.splice(i,1); B.push(n); return true; } return false; }
+document.addEventListener("click", e=>{
+  const li = e.target.closest("li.mv"); if(!li) return;
+  e.stopPropagation();
+  const n = li.dataset.name, ctx = li.dataset.ctx, stats = computeStats(state);
+  if(ctx==="cur"){ moveIn(editCur.A, editCur.B, n) || moveIn(editCur.B, editCur.A, n); }
+  else { const sg = suggestions[+ctx.slice(1)]; selSugg = +ctx.slice(1);
+    moveIn(sg.A, sg.B, n) || moveIn(sg.B, sg.A, n); sg.sa = teamSum(sg.A, stats); sg.sb = teamSum(sg.B, stats); }
+  render();
+}, true);
+function startEditCur(){ const l=state.lastTeams; editCur={A:l[0].players.map(p=>p.name), B:l[1].players.map(p=>p.name)}; render(); }
+function cancelEditCur(){ editCur=null; render(); }
+function teamsObj(A, B){
+  const stats = computeStats(state);
+  const mk = (name, list)=>{ const players=list.map(n=>{const p=stats[n]||{w:0,g:0,v:0,pts:0,gs:0}; return {name:n, present:true, w:p.w, g:p.g, v:p.v, pts:p.pts, gs:p.gs};}); return {name, players, totalPts: players.reduce((t,p)=>t+p.pts,0)}; };
+  return [mk(TEAM_A, A), mk(TEAM_B, B)];
+}
+function saveEditCur(){ const t = teamsObj(editCur.A, editCur.B); draft = null;
+  mutate(s=>{ s.lastTeams = t; }, "Teams aangepast").then(ok=>{ if(ok){ editCur=null; render(); } }); }
+
+function viewTeams(){
+  const present = state.players.filter(p=>p.present).map(p=>p.name);
+  const stats = computeStats(state);
+  const odd = present.length % 2 === 1;
+  const last = state.lastTeams?.length === 2 ? state.lastTeams : null;
+  let html = "";
+  if(last){
+    html += `<div class="card"><div class="row spread"><h2>Huidige teams</h2>${state.lastTeamsLogged?`<span class="tag">uitslag ingevuld</span>`:`<button class="btn sm primary" onclick="go('uitslag')">Uitslag invoeren</button>`}</div>
+      ${editCur?`<p class="small muted" style="margin:0 0 8px">Tik op een speler om hem naar het andere team te verplaatsen.</p>
+        <div class="teams">${teamBox("a", TEAM_A, editCur.A, stats, "cur")}${teamBox("b", TEAM_B, editCur.B, stats, "cur")}</div>
+        <div class="row" style="margin-top:10px"><button class="btn" onclick="cancelEditCur()">Annuleren</button><button class="btn primary" style="flex:1" onclick="saveEditCur()">Opslaan</button></div>`
+      :`<div class="teams">${teamBox("a", last[0].name, last[0].players.map(p=>p.name), stats)}${teamBox("b", last[1].name, last[1].players.map(p=>p.name), stats)}</div>
+        ${state.lastTeamsLogged?"":`<button class="btn sm" style="margin-top:10px" onclick="startEditCur()">⇄ Spelers wisselen</button>`}`}
+      ${state.currentJoker?`<div class="joker">🃏 Joker: <b>${esc(state.currentJoker)}</b> (speelt voor allebei)</div>`:""}
+    </div>`;
+  }
+  if(present.length < 2){
+    return html + `<div class="card empty">Meld eerst minstens 2 spelers aan bij <a href="#" onclick="go('aanwezig');return false">Aanwezig</a>.</div>`;
+  }
+  html += `<div class="card"><h2>Nieuwe suggesties <span class="muted small">${present.length} spelers</span></h2>`;
+  if(odd){
+    const cur = window._joker && present.includes(window._joker) ? window._joker : "";
+    html += `<div class="row small" style="margin-bottom:10px">🃏 Oneven aantal — joker:
+      <select onchange="window._joker=this.value;newSuggestions()"><option value="">kies…</option>${present.map(n=>`<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("")}</select>
+      <button class="btn sm" onclick="randomJoker()">Willekeurig</button></div>`;
+    if(!cur){ return html + `<p class="muted small">Kies eerst een joker.</p></div>`; }
+  }
+  if(!suggestions.length) newSuggestions(true);
+  html += suggestions.map((s,i)=>`
+    <div class="card sugg ${i===selSugg?"sel":""}" onclick="selSugg=${i};render()" style="margin-bottom:10px">
+      <div class="row spread small" style="margin-bottom:8px"><b>Optie ${i+1}</b><span class="muted">sterkte ${s.sa.toFixed(1)} – ${s.sb.toFixed(1)}</span></div>
+      <div class="teams">${teamBox("a", TEAM_A, s.A, stats, "s"+i)}${teamBox("b", TEAM_B, s.B, stats, "s"+i)}</div>
+    </div>`).join("");
+  html += `<div class="row"><button class="btn" onclick="newSuggestions()">🔀 Andere suggesties</button>
+    <button class="btn primary" style="flex:1" onclick="confirmTeams()">Optie ${selSugg+1} vastzetten</button></div>
+    <p class="muted small" style="margin-bottom:0">Tik op een speler (⇄) om hem naar het andere team te wisselen. Sterkte = punten per wedstrijd, getal achter de naam = totaal punten.</p></div>`;
+  return html;
+}
+
+function emptyDraft(){
+  const last = state.lastTeams?.length === 2 && !state.lastTeamsLogged ? state.lastTeams : null;
+  const side = {};
+  if(last){ last[0].players.forEach(p=>side[p.name]="A"); last[1].players.forEach(p=>side[p.name]="B"); }
+  if(last && state.currentJoker) side[state.currentJoker] = "J";
+  return {dateISO: todayISO(), scoreA: 0, scoreB: 0, motm: "", side};
+}
+function draftFromUitslag(u){
+  const side = {};
+  (u.teamA||[]).forEach(n=>side[n]="A"); (u.teamB||[]).forEach(n=>side[n]="B");
+  if(u.joker) side[u.joker]="J";
+  return {dateISO: u.dateISO, scoreA: u.scoreA, scoreB: u.scoreB, motm: u.motm||"", side};
+}
+
+function viewUitslag(){
+  draft ??= emptyDraft();
+  const names = [...new Set([...state.players.map(p=>p.name), ...Object.keys(draft.side)])];
+  const inMatch = names.filter(n=>draft.side[n]);
+  const segBtn = (n,v,l)=>`<button type="button" class="${draft.side[n]===v?"on"+v:""}" onclick="setSide('${esc(n).replace(/'/g,"\\'")}','${v}')">${l}</button>`;
+  let html = `<div class="card">
+    <div class="row spread"><h2>${editIdx!==null?"Uitslag bewerken":"Uitslag invoeren"}</h2>${editIdx!==null?`<button class="btn sm" onclick="cancelEdit()">Annuleren</button>`:""}</div>
+    <div class="row small"><label>Datum <input type="date" value="${draft.dateISO}" onchange="draft.dateISO=this.value"></label></div>
+    <div class="score">
+      <div style="text-align:center"><div class="small" style="color:var(--a);font-weight:600">${TEAM_A}</div><input type="number" min="0" inputmode="numeric" value="${draft.scoreA}" oninput="draft.scoreA=+this.value"></div>
+      <span class="res">–</span>
+      <div style="text-align:center"><div class="small" style="color:var(--b);font-weight:600">${TEAM_B}</div><input type="number" min="0" inputmode="numeric" value="${draft.scoreB}" oninput="draft.scoreB=+this.value"></div>
+    </div>
+    <details ${editIdx!==null||!inMatch.length?"open":""}><summary class="small muted">Spelers (${inMatch.filter(n=>draft.side[n]==="A").length} – ${inMatch.filter(n=>draft.side[n]==="B").length}${inMatch.some(n=>draft.side[n]==="J")?" + joker":""})</summary>
+      <div class="pick" style="margin-top:8px">
+      ${names.map(n=>`<span>${esc(n)}</span><span class="seg">${segBtn(n,"A","Zonder")}${segBtn(n,"B","Met")}${segBtn(n,"J","🃏")}</span><button type="button" class="btn sm" onclick="setSide('${esc(n).replace(/'/g,"\\'")}','')" ${draft.side[n]?"":"disabled"}>✕</button>`).join("")}
+      </div>
+    </details>
+    <div class="row small" style="margin-top:12px"><label>Man of the match
+      <select onchange="draft.motm=this.value"><option value="">—</option>${inMatch.map(n=>`<option ${n===draft.motm?"selected":""}>${esc(n)}</option>`).join("")}</select></label></div>
+    <button class="btn primary" style="width:100%;margin-top:12px" onclick="saveUitslag()">${editIdx!==null?"Wijzigingen opslaan":"Uitslag opslaan"}</button>
+  </div>`;
+  html += `<div class="card"><h2>Gespeeld</h2>${state.uitslagen.length?state.uitslagen.map((u,i)=>`
+    <div class="match">
+      <div class="row spread"><span class="small muted">${esc(u.date)}</span>
+        <span class="row"><button class="btn sm" onclick="editUitslag(${i})">Bewerken</button><button class="btn sm danger" onclick="deleteUitslag(${i})">Verwijder</button></span></div>
+      <div class="row spread" style="margin-top:4px"><span style="color:var(--a)">${esc(u.teamAName||TEAM_A)}</span><span class="res">${u.scoreA} – ${u.scoreB}</span><span style="color:var(--b)">${esc(u.teamBName||TEAM_B)}</span></div>
+      <div class="small muted" style="margin-top:4px">${(u.teamA||[]).map(esc).join(", ")} <b>vs</b> ${(u.teamB||[]).map(esc).join(", ")}${u.joker?` · 🃏 ${esc(u.joker)}`:""}${u.motm?` · ⭐ ${esc(u.motm)}`:""}</div>
+    </div>`).join(""):`<div class="empty">Nog geen uitslagen.</div>`}</div>`;
+  return html;
+}
+
+function viewStand(){
+  const rows = standing(state);
+  let rank = 0, prev = null;
+  return `<div class="card"><h2>Stand <span class="muted small">${state.uitslagen.length} wedstrijden</span></h2>
+  <table><thead><tr><th>#</th><th>Speler</th><th>Gesp</th><th>W</th><th>G</th><th>V</th><th>Ptn</th></tr></thead><tbody>
+  ${rows.map((p,i)=>{ if(p.pts!==prev){rank=i+1;prev=p.pts;} return `<tr><td>${rank}</td><td>${esc(p.name)}</td><td>${p.gs}</td><td>${p.w}</td><td>${p.g}</td><td>${p.v}</td><td class="pts">${p.pts}</td></tr>`;}).join("")}
+  </tbody></table>
+  <p class="muted small" style="margin-bottom:0">Winst 3, gelijk 1. De joker krijgt het resultaat van het winnende team.</p></div>`;
+}
+
+/* ---------- Acties ---------- */
+function go(t){ tab=t; const u=new URL(location); u.searchParams.set("mode",t); history.replaceState(null,"",u); render(); scrollTo(0,0); }
+function togglePresent(i){ const n=state.players[i].name, v=!state.players[i].present; state.players[i].present=v; suggestions=[]; render();
+  mutate(s=>{const p=s.players.find(p=>p.name===n); if(p) p.present=v;}); }
+function resetPresence(){ if(!confirm("Iedereen afmelden?")) return; suggestions=[]; mutate(s=>s.players.forEach(p=>p.present=false), "Iedereen afgemeld"); }
+function addPlayer(e){ e.preventDefault(); const n=document.getElementById("newName").value.trim(); if(!n) return;
+  if(state.players.some(p=>p.name.toLowerCase()===n.toLowerCase())){ toast("Bestaat al"); return; }
+  mutate(s=>{ if(!s.players.some(p=>p.name===n)) s.players.push({name:n, present:true}); }, n+" toegevoegd"); }
+function removePlayer(){ const n=document.getElementById("delName").value; if(!n||!confirm(n+" verwijderen uit de spelerslijst?")) return;
+  mutate(s=>{ s.players=s.players.filter(p=>p.name!==n); }, n+" verwijderd"); }
+function randomJoker(){ const pr=state.players.filter(p=>p.present).map(p=>p.name); window._joker=pr[Math.floor(Math.random()*pr.length)]; newSuggestions(); }
+function newSuggestions(silent){ const present=state.players.filter(p=>p.present).map(p=>p.name);
+  const joker = present.length%2 ? window._joker : null; suggestions = makeSuggestions(present, joker); selSugg=0; if(!silent) render(); }
+function confirmTeams(){
+  const s0 = suggestions[selSugg]; if(!s0) return;
+  const t = teamsObj(s0.A, s0.B);
+  const present = state.players.filter(p=>p.present).map(p=>p.name);
+  const joker = present.length%2 ? (window._joker||null) : null;
+  draft = null;
+  mutate(s=>{ s.lastTeams=t; s.currentJoker=joker; s.lastTeamsLogged=false; }, "Teams vastgezet").then(ok=>{ if(ok){ suggestions=[]; render(); } });
+}
+function setSide(n, v){ if(v) draft.side[n]=v; else delete draft.side[n];
+  if(v==="J") for(const k in draft.side) if(k!==n && draft.side[k]==="J") delete draft.side[k];
+  render(); }
+function saveUitslag(){
+  const A = Object.keys(draft.side).filter(n=>draft.side[n]==="A");
+  const B = Object.keys(draft.side).filter(n=>draft.side[n]==="B");
+  const J = Object.keys(draft.side).find(n=>draft.side[n]==="J") || null;
+  if(!A.length || !B.length){ toast("Zet spelers in beide teams"); return; }
+  if(!draft.dateISO){ toast("Kies een datum"); return; }
+  const idx = editIdx;
+  const base = idx!==null ? state.uitslagen[idx] : {};
+  const u = {...base, teamAName: base.teamAName||TEAM_A, teamBName: base.teamBName||TEAM_B, teamA:A, teamB:B,
+    scoreA:+draft.scoreA||0, scoreB:+draft.scoreB||0, date:fmtDate(draft.dateISO), dateISO:draft.dateISO,
+    joker:J, motm:draft.motm||null, goalsA: base.goalsA||{}, goalsB: base.goalsB||{}};
+  const origKey = idx!==null ? JSON.stringify(state.uitslagen[idx]) : null;
+  mutate(s=>{
+    if(idx!==null){ const j=s.uitslagen.findIndex(x=>JSON.stringify(x)===origKey); if(j>=0) s.uitslagen[j]=u; else throw new Error("Uitslag is intussen gewijzigd, probeer opnieuw"); }
+    else { s.uitslagen.push(u); s.lastTeamsLogged=true; }
+    s.uitslagen.sort((x,y)=>(y.dateISO||"").localeCompare(x.dateISO||""));
+  }, idx!==null?"Uitslag bijgewerkt":"Uitslag opgeslagen").then(ok=>{ if(ok){ editIdx=null; draft=null; render(); } });
+}
+function editUitslag(i){ editIdx=i; draft=draftFromUitslag(state.uitslagen[i]); render(); scrollTo(0,0); }
+function cancelEdit(){ editIdx=null; draft=null; render(); }
+function deleteUitslag(i){ const u=state.uitslagen[i]; if(!confirm(`Uitslag van ${u.date} (${u.scoreA}-${u.scoreB}) verwijderen?`)) return;
+  const key=JSON.stringify(u); editIdx=null; draft=null;
+  mutate(s=>{ s.uitslagen=s.uitslagen.filter(x=>JSON.stringify(x)!==key); }, "Uitslag verwijderd"); }
+
+/* ---------- Start ---------- */
+document.getElementById("nav").addEventListener("click", e=>{ const b=e.target.closest("button"); if(b) go(b.dataset.tab); });
+(async function init(){
+  const m = new URLSearchParams(location.search).get("mode");
+  if(["aanwezig","suggestions","uitslag","stand"].includes(m)) tab=m;
+  render();
+  try{ state = await fetchState(); setStatus("Bijgewerkt " + new Date().toLocaleTimeString("nl-NL",{hour:"2-digit",minute:"2-digit"})); }
+  catch(e){ setStatus(e.message, true); document.getElementById("app").innerHTML=`<div class="card empty err">${esc(e.message)}</div>`; return; }
+  render();
+})();
+// Ververs als de app weer in beeld komt (bijv. telefoon uit de zak)
+document.addEventListener("visibilitychange", async ()=>{ if(document.visibilityState==="visible" && state && editIdx===null){ try{ state=await fetchState(); render(); }catch{} } });
+</script>
+</body>
+</html>
