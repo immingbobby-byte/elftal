@@ -103,6 +103,13 @@ td.pts{font-weight:700}
 .badge{display:inline-block;min-width:22px;text-align:center;font-weight:700;font-size:12px;padding:1px 6px;border-radius:6px;color:#fff}
 .badge.W{background:var(--win)} .badge.G{background:var(--draw)} .badge.V{background:var(--loss)}
 @media (prefers-color-scheme: dark){.badge{color:#0e1411}}
+.badges{display:flex;flex-wrap:wrap;gap:6px}
+.bdg{display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:13px}
+.bdg.off{opacity:.35;filter:grayscale(1)}
+.mini{font-size:12px;margin-left:4px;letter-spacing:1px}
+.verdict{font-size:12px;margin-top:4px;padding:4px 8px;border-radius:8px;background:var(--bg);display:inline-block}
+.meter{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:6px 0 2px}
+.meter>div:first-child{background:var(--a)} .meter>div:last-child{background:var(--b)}
 .wa{background:#25D366;border-color:#25D366;color:#fff;font-weight:600}
 </style>
 </head>
@@ -182,17 +189,18 @@ function fmtDate(iso){const [y,m,d]=iso.split("-").map(Number);return `${d} ${MO
 /* ---------- Stand ---------- */
 function computeStats(s){
   const st = {};
-  const get = n => st[n] ??= {name:n, w:0, g:0, v:0, gs:0, pts:0};
+  const get = n => st[n] ??= {name:n, w:0, g:0, v:0, gs:0, pts:0, gd:0};
+  const cap = x => Math.max(-3, Math.min(3, x));   // een 10-0 telt als +3
   for(const u of s.uitslagen){
     const a = +u.scoreA, b = +u.scoreB;
     for(const [team, mine, theirs] of [[u.teamA||[], a, b], [u.teamB||[], b, a]]){
       for(const n of team){
-        const p = get(n); p.gs++;
+        const p = get(n); p.gs++; p.gd += cap(mine - theirs);
         if(mine > theirs) p.w++; else if(mine === theirs) p.g++; else p.v++;
       }
     }
     if(u.joker){ // joker krijgt het resultaat van het winnende team
-      const p = get(u.joker); p.gs++;
+      const p = get(u.joker); p.gs++; p.gd += cap(Math.abs(a - b));
       if(a === b) p.g++; else p.w++;
     }
   }
@@ -232,10 +240,87 @@ function attendance(s){
 }
 
 /* ---------- Teams indelen ---------- */
+// Sterkte = punten per wedstrijd + een beetje doelsaldo, afgevlakt zodat nieuwe spelers op gemiddeld niveau starten
 function strength(stats, n){
-  const p = stats[n]; const k = 2, prior = 1.5;      // nieuwe spelers starten op gemiddeld niveau
-  return p ? (p.pts + prior*k)/(p.gs + k) : prior;
+  const p = stats[n]; const k = 2, prior = 1.5;
+  return p ? (p.pts + prior*k)/(p.gs + k) + 0.15*(p.gd||0)/(p.gs + k) : prior;
 }
+function predict(sa, sb){
+  const d = sa - sb, pA = 1/(1+Math.exp(-1.1*d));
+  const ad = Math.abs(d), fav = d>0?"A":"B";
+  const label = ad<0.4 ? "gelijkwaardig" : ad<1.2 ? "lichte favoriet" : "duidelijke favoriet";
+  return {d, pA, fav: ad<0.4?null:fav, label};
+}
+function predText(pr){ return pr.fav ? `${pr.fav==="A"?TEAM_A:TEAM_B} ${pr.label}` : "Gelijkwaardig"; }
+function meter(pr){ const a=Math.round(pr.pA*100); return `<div class="meter"><div style="width:${a}%"></div><div style="width:${100-a}%"></div></div><div class="row spread small muted"><span>${a}% kans</span><span>${predText(pr)}</span><span>${100-a}% kans</span></div>`; }
+// Eerlijkheidscheck: per wedstrijd de verwachting op basis van alleen de wedstrijden daarvoor
+function fairness(s){
+  const asc = chrono(s), out = new Map();
+  for(let i=0;i<asc.length;i++){
+    const u = asc[i], prior = {uitslagen: asc.filter(x=>(x.dateISO||"") < (u.dateISO||""))};
+    const st = computeStats(prior);
+    const known = [...(u.teamA||[]),...(u.teamB||[])].filter(n=>st[n]).length;
+    if(!prior.uitslagen.length || known < 2){ out.set(u, null); continue; }
+    const sa = teamSum(u.teamA||[], st), sb = teamSum(u.teamB||[], st), pr = predict(sa, sb);
+    const a=+u.scoreA, b=+u.scoreB, margin=Math.abs(a-b), winner = a>b?"A":b>a?"B":null;
+    let icon, txt, hit;
+    if(!pr.fav){ hit = margin<=1; icon = hit?"✅":"⚖️"; txt = hit?"Leek gelijkwaardig en was spannend":"Leek gelijkwaardig, toch ruim"; }
+    else if(winner===pr.fav){ hit=true; icon="✅"; txt="Favoriet won"; }
+    else if(!winner){ hit=false; icon="🤝"; txt="Gelijk, ondanks favoriet"; }
+    else { hit=false; icon="😮"; txt="Verrassing: underdog won"; }
+    out.set(u, {sa, sb, pr, margin, hit, icon, txt, fav: pr.fav});
+  }
+  return out;
+}
+
+/* ---------- Badges ---------- */
+const BADGES = [
+  {id:"koploper", e:"🏆", n:"Koploper", d:"Staat nu bovenaan de stand"},
+  {id:"dreef", e:"🔥", n:"Op dreef", d:"3 keer op rij gewonnen"},
+  {id:"onstuitbaar", e:"🚀", n:"Onstuitbaar", d:"5 keer op rij gewonnen"},
+  {id:"muur", e:"🛡️", n:"De muur", d:"5 wedstrijden op rij ongeslagen"},
+  {id:"altijd", e:"💯", n:"Nooit gemist", d:"Bij elke wedstrijd aanwezig (min. 4)"},
+  {id:"trouw", e:"🗓️", n:"Trouwe kracht", d:"Opkomst van 75% of meer"},
+  {id:"veteraan", e:"🎖️", n:"Veteraan", d:"10 wedstrijden gespeeld"},
+  {id:"nul", e:"🧤", n:"De nul", d:"3 keer gewonnen zonder tegengoal"},
+  {id:"kanon", e:"💥", n:"Kanonnade", d:"Een wedstrijd met 5+ verschil gewonnen"},
+  {id:"joker", e:"🃏", n:"Jokerkoning", d:"Vaakst joker geweest (min. 2)"},
+  {id:"motm", e:"⭐", n:"Man of the match", d:"Minstens 1 keer gekozen"},
+  {id:"reus", e:"😮", n:"Reuzendoder", d:"Won terwijl de tegenpartij duidelijke favoriet was"},
+  {id:"klimmer", e:"📈", n:"Klimmer", d:"Steeg 3+ plekken na de laatste wedstrijd"},
+  {id:"pech", e:"🌧️", n:"Pechvogel", d:"3 keer op rij verloren (komt goed!)"},
+];
+function badgesFor(s){
+  const h = playerHistory(s), total = s.uitslagen.length, res = {};
+  const give = (n,id)=>{ (res[n]??=new Set()).add(id); };
+  const rows = standing(s); if(rows.length) rows.filter(r=>r.pts===rows[0].pts).forEach(r=>give(r.name,"koploper"));
+  const jokers = {}; s.uitslagen.forEach(u=>{ if(u.joker) jokers[u.joker]=(jokers[u.joker]||0)+1; });
+  const maxJ = Math.max(0,...Object.values(jokers)); if(maxJ>=2) Object.entries(jokers).filter(([,c])=>c===maxJ).forEach(([n])=>give(n,"joker"));
+  s.uitslagen.forEach(u=>{ if(u.motm) give(u.motm,"motm"); });
+  const fair = fairness(s);
+  for(const [n,list] of Object.entries(h)){
+    const sk = streaks(list); let lossRun=0, maxLoss=0, clean=0, kanon=false, reus=false;
+    for(const m of list){ lossRun = m.res==="V"? lossRun+1:0; maxLoss=Math.max(maxLoss,lossRun);
+      const u=m.u, mine = m.side==="B"?+u.scoreB:+u.scoreA, theirs = m.side==="B"?+u.scoreA:+u.scoreB;
+      if(m.side!=="J" && m.res==="W" && theirs===0) clean++;
+      if(m.side!=="J" && m.res==="W" && mine-theirs>=5) kanon=true;
+      const f = fair.get(u); if(f && f.fav && Math.abs(f.pr.d)>=1.2 && m.side!=="J" && m.res==="W" && f.fav!==m.side) reus=true; }
+    if(sk.bestW>=3) give(n,"dreef"); if(sk.bestW>=5) give(n,"onstuitbaar"); if(sk.bestUnb>=5) give(n,"muur");
+    if(total>=4 && list.length===total) give(n,"altijd"); if(total>=4 && list.length/total>=0.75) give(n,"trouw");
+    if(list.length>=10) give(n,"veteraan"); if(clean>=3) give(n,"nul"); if(kanon) give(n,"kanon"); if(reus) give(n,"reus");
+    if(maxLoss>=3) give(n,"pech");
+  }
+  // klimmer: positie voor en na de laatste speeldag
+  const dates = [...new Set(s.uitslagen.map(u=>u.dateISO))].sort();
+  if(dates.length>=2){
+    const last = dates[dates.length-1];
+    const pos = arr=>{ const m={}; let r=0,pv=null; arr.forEach((p,i)=>{ if(p.pts!==pv){r=i+1;pv=p.pts;} m[p.name]=r; }); return m; };
+    const before = pos(standing({uitslagen:s.uitslagen.filter(u=>u.dateISO<last)})), after = pos(rows);
+    for(const n in after) if(before[n] && before[n]-after[n]>=3) give(n,"klimmer");
+  }
+  return res;
+}
+const badgeIcons = set=>set&&set.size?`<span class="mini" title="badges">${BADGES.filter(b=>set.has(b.id)).map(b=>b.e).join("")}</span>`:"";
 function makeSuggestions(present, joker, count=3){
   const stats = computeStats(state);
   let pool = present.filter(n => n !== joker);
@@ -332,6 +417,7 @@ function viewTeams(){
         <div class="teams">${teamBox("a", TEAM_A, editCur.A, stats, "cur")}${teamBox("b", TEAM_B, editCur.B, stats, "cur")}</div>
         <div class="row" style="margin-top:10px"><button class="btn" onclick="cancelEditCur()">Annuleren</button><button class="btn primary" style="flex:1" onclick="saveEditCur()">Opslaan</button></div>`
       :`<div class="teams">${teamBox("a", last[0].name, last[0].players.map(p=>p.name), stats)}${teamBox("b", last[1].name, last[1].players.map(p=>p.name), stats)}</div>
+        ${meter(predict(teamSum(last[0].players.map(p=>p.name),stats), teamSum(last[1].players.map(p=>p.name),stats)))}
         <div class="row" style="margin-top:10px"><button class="btn sm wa" onclick="shareTeams()">Deel via WhatsApp</button>${state.lastTeamsLogged?"":`<button class="btn sm" onclick="startEditCur()">⇄ Spelers wisselen</button>`}</div>`}
       ${state.currentJoker?`<div class="joker">🃏 Joker: <b>${esc(state.currentJoker)}</b> (speelt voor allebei)</div>`:""}
     </div>`;
@@ -352,10 +438,11 @@ function viewTeams(){
     <div class="card sugg ${i===selSugg?"sel":""}" onclick="selSugg=${i};render()" style="margin-bottom:10px">
       <div class="row spread small" style="margin-bottom:8px"><b>Optie ${i+1}</b><span class="muted">sterkte ${s.sa.toFixed(1)} – ${s.sb.toFixed(1)}</span></div>
       <div class="teams">${teamBox("a", TEAM_A, s.A, stats, "s"+i)}${teamBox("b", TEAM_B, s.B, stats, "s"+i)}</div>
+      ${meter(predict(s.sa, s.sb))}
     </div>`).join("");
   html += `<div class="row"><button class="btn" onclick="newSuggestions()">🔀 Andere suggesties</button>
     <button class="btn primary" style="flex:1" onclick="confirmTeams()">Optie ${selSugg+1} vastzetten</button></div>
-    <p class="muted small" style="margin-bottom:0">Tik op een speler (⇄) om hem naar het andere team te wisselen. Sterkte = punten per wedstrijd, getal achter de naam = totaal punten.</p></div>`;
+    <p class="muted small" style="margin-bottom:0">Tik op een speler (⇄) om hem naar het andere team te wisselen. Sterkte = punten per wedstrijd plus een beetje doelsaldo, getal achter de naam = totaal punten.</p></div>`;
   return html;
 }
 
@@ -395,12 +482,25 @@ function viewUitslag(){
       <select onchange="draft.motm=this.value"><option value="">—</option>${inMatch.map(n=>`<option ${n===draft.motm?"selected":""}>${esc(n)}</option>`).join("")}</select></label></div>
     <button class="btn primary" style="width:100%;margin-top:12px" onclick="saveUitslag()">${editIdx!==null?"Wijzigingen opslaan":"Uitslag opslaan"}</button>
   </div>`;
+  const fair = fairness(state), fs = [...fair.values()].filter(Boolean);
+  if(fs.length){
+    const favs = fs.filter(f=>f.fav), favWon = favs.filter(f=>f.hit).length, close = fs.filter(f=>f.margin<=1).length;
+    const avg = (fs.reduce((t,f)=>t+f.margin,0)/fs.length).toFixed(1);
+    html += `<div class="card"><h2>Eerlijkheidscheck <span class="muted small">${fs.length} wedstrijden beoordeeld</span></h2>
+      <div class="stats">
+        <div class="stat"><b>${Math.round(close/fs.length*100)}%</b><span>spannend (≤ 1 goal)</span></div>
+        <div class="stat"><b>${favs.length?Math.round(favWon/favs.length*100)+"%":"—"}</b><span>favoriet won</span></div>
+        <div class="stat"><b>${avg}</b><span>gem. verschil</span></div>
+      </div>
+      <p class="muted small" style="margin-bottom:0">Per wedstrijd berekent de app vooraf wie favoriet was, op basis van alleen de wedstrijden daarvoor. Hoe vaker het spannend is, hoe eerlijker de teams. De teamsuggesties gebruiken deze sterkte om steeds beter te verdelen.</p></div>`;
+  }
   html += `<div class="card"><h2>Gespeeld</h2>${state.uitslagen.length?state.uitslagen.map((u,i)=>`
     <div class="match">
       <div class="row spread"><span class="small muted">${esc(u.date)}</span>
         <span class="row"><button class="btn sm wa" onclick="shareUitslag(${i})" title="Deel via WhatsApp">Deel</button><button class="btn sm" onclick="editUitslag(${i})">Bewerken</button><button class="btn sm danger" onclick="deleteUitslag(${i})">Verwijder</button></span></div>
       <div class="row spread" style="margin-top:4px"><span style="color:var(--a)">${esc(u.teamAName||TEAM_A)}</span><span class="res">${u.scoreA} – ${u.scoreB}</span><span style="color:var(--b)">${esc(u.teamBName||TEAM_B)}</span></div>
       <div class="small muted" style="margin-top:4px">${(u.teamA||[]).map(esc).join(", ")} <b>vs</b> ${(u.teamB||[]).map(esc).join(", ")}${u.joker?` · 🃏 ${esc(u.joker)}`:""}${u.motm?` · ⭐ ${esc(u.motm)}`:""}</div>
+      ${(()=>{ const f=fair.get(u); return f?`<div class="verdict">${f.icon} ${f.txt} <span class="muted">· vooraf: ${predText(f.pr).toLowerCase()} (${f.sa.toFixed(1)}–${f.sb.toFixed(1)})</span></div>`:`<div class="verdict muted">— te weinig eerdere data voor een verwachting</div>`; })()}
     </div>`).join(""):`<div class="empty">Nog geen uitslagen.</div>`}</div>`;
   return html;
 }
@@ -415,10 +515,11 @@ function viewStand(){
   const curW = top("cur", x=>x.curType==="W"), curU = st.filter(x=>x.curType!=="V").map(x=>({...x, unbNow: (()=>{let c=0; for(let i=h[x.name].length-1;i>=0&&h[x.name][i].res!=="V";i--) c++; return c;})()})).sort((a,b)=>b.unbNow-a.unbNow);
   const curUTop = curU.filter(x=>x.unbNow>0 && x.unbNow===curU[0]?.unbNow);
   const names = arr=>arr.map(x=>`<a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(x.name)}">${esc(x.name)}</a>`).join(", ");
-  const att = attendance(state), total = state.uitslagen.length;
+  const att = attendance(state), total = state.uitslagen.length, bd = badgesFor(state);
+  const holders = id=>Object.keys(bd).filter(n=>bd[n].has(id)).sort();
   return `<div class="card"><h2>Stand <span class="muted small">${total} wedstrijden</span></h2>
   <table><thead><tr><th>#</th><th>Speler</th><th>Gesp</th><th>W</th><th>G</th><th>V</th><th>Ptn</th></tr></thead><tbody>
-  ${rows.map((p,i)=>{ if(p.pts!==prev){rank=i+1;prev=p.pts;} return `<tr><td>${rank}</td><td><a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(p.name)}">${esc(p.name)}</a>${formDots(h[p.name]||[])}</td><td>${p.gs}</td><td>${p.w}</td><td>${p.g}</td><td>${p.v}</td><td class="pts">${p.pts}</td></tr>`;}).join("")}
+  ${rows.map((p,i)=>{ if(p.pts!==prev){rank=i+1;prev=p.pts;} return `<tr><td>${rank}</td><td><a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(p.name)}">${esc(p.name)}</a>${formDots(h[p.name]||[])}${badgeIcons(bd[p.name])}</td><td>${p.gs}</td><td>${p.w}</td><td>${p.g}</td><td>${p.v}</td><td class="pts">${p.pts}</td></tr>`;}).join("")}
   </tbody></table>
   <p class="muted small" style="margin-bottom:0">Winst 3, gelijk 1. De joker krijgt het resultaat van het winnende team. Bolletjes = laatste 5 (groen W, geel G, rood V). Tik op een naam voor het profiel.</p></div>
   <div class="card"><h2>Reeksen</h2><ul class="list">
@@ -426,6 +527,9 @@ function viewStand(){
     <li><span>🛡️ Langst ongeslagen</span><span>${bestU.length?`<b>${bestU[0].bestUnb}</b> · ${names(bestU)}`:"—"}</span></li>
     <li><span>📈 Nu op winstreeks</span><span>${curW.length?`<b>${curW[0].cur}</b> · ${names(curW)}`:"—"}</span></li>
     <li><span>✅ Nu ongeslagen</span><span>${curUTop.length?`<b>${curUTop[0].unbNow}</b> · ${names(curUTop)}`:"—"}</span></li>
+  </ul></div>
+  <div class="card"><h2>Badges</h2><ul class="list">
+    ${BADGES.map(b=>{ const hs=holders(b.id); return `<li><span><span style="font-size:18px">${b.e}</span> <b>${b.n}</b><br><span class="muted small">${b.d}</span></span><span class="small" style="text-align:right;max-width:50%">${hs.length?names(hs.map(n=>({name:n}))):"<span class=\"muted\">nog niemand</span>"}</span></li>`; }).join("")}
   </ul></div>
   <div class="card"><h2>Opkomst <span class="muted small">van ${total} wedstrijden</span></h2><ul class="list">
     ${att.map(a=>`<li><span style="flex:1"><a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(a.name)}">${esc(a.name)}</a><div class="bar"><div style="width:${a.pct}%"></div></div></span><span class="small" style="min-width:64px;text-align:right"><b>${a.n}</b>× · ${a.pct}%</span></li>`).join("")}
@@ -467,6 +571,9 @@ function viewProfile(n){
       <div class="stat"><b>${motm}</b><span>⭐ MOTM</span></div>
     </div>
   </div>
+  <div class="card"><h2>Badges <span class="muted small">${(badgesFor(state)[n]||new Set()).size} van ${BADGES.length}</span></h2><div class="badges">
+    ${(()=>{ const mine = badgesFor(state)[n]||new Set(); return [...BADGES].sort((a,b)=>mine.has(b.id)-mine.has(a.id)).map(b=>`<span class="bdg ${mine.has(b.id)?"":"off"}" title="${esc(b.d)}">${b.e} ${b.n}</span>`).join(""); })()}
+  </div><p class="muted small" style="margin-bottom:0">Grijs = nog te verdienen. Houd je vinger op een badge voor uitleg.</p></div>
   <div class="card"><h2>Reeksen</h2><ul class="list">
     <li><span>Huidige reeks</span><span>${curTxt}</span></li>
     <li><span>Langste winstreeks</span><span><b>${sk.bestW}</b></span></li>
