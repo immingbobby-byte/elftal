@@ -350,8 +350,16 @@ function render(){
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on", b.dataset.tab===tab));
   const app = document.getElementById("app");
   if(!state){ app.innerHTML = `<div class="empty">Laden…</div>`; return; }
-  app.innerHTML = ({aanwezig: viewAanwezig, suggestions: viewTeams, uitslag: viewUitslag, stand: viewStand}[tab])();
+  try{
+    app.innerHTML = ({aanwezig: viewAanwezig, suggestions: viewTeams, uitslag: viewUitslag, stand: viewStand}[tab])();
+  }catch(e){
+    console.error(e);
+    app.innerHTML = `<div class="card"><h2>Er ging iets mis</h2><p class="small">Dit scherm kon niet worden getoond. Je data is veilig.</p>
+      <p class="small muted" style="word-break:break-word">${esc(e && (e.stack||e.message) || e)}</p>
+      <button class="btn primary" onclick="suggestions=[];window._joker=null;editCur=null;draft=null;editIdx=null;profileName=null;render()">Opnieuw proberen</button></div>`;
+  }
 }
+window.addEventListener("error", e=>{ try{ toast("Fout: " + (e.message||"onbekend")); }catch{} });
 
 function viewAanwezig(){
   const pres = state.players.filter(p=>p.present).length;
@@ -426,14 +434,16 @@ function viewTeams(){
     return html + `<div class="card empty">Meld eerst minstens 2 spelers aan bij <a href="#" onclick="go('aanwezig');return false">Aanwezig</a>.</div>`;
   }
   html += `<div class="card"><h2>Nieuwe suggesties <span class="muted small">${present.length} spelers</span></h2>`;
+  const fixed = fixedJoker();
   if(odd){
-    const cur = window._joker && present.includes(window._joker) ? window._joker : "";
+    const cur = pickJoker(present);
     html += `<div class="row small" style="margin-bottom:10px">🃏 Oneven aantal — joker:
-      <select onchange="window._joker=this.value;newSuggestions()"><option value="">kies…</option>${present.map(n=>`<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("")}</select>
-      <button class="btn sm" onclick="randomJoker()">Willekeurig</button></div>`;
-    if(!cur){ return html + `<p class="muted small">Kies eerst een joker.</p></div>`; }
-  }
-  if(!suggestions.length) newSuggestions(true);
+      <select onchange="window._joker=this.value;newSuggestions()">${present.map(n=>`<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("")}</select>
+      <button class="btn sm" onclick="randomJoker()">Willekeurig</button></div>
+      ${cur===fixed?`<p class="muted small" style="margin:-4px 0 10px">${esc(fixed)} is de vaste joker.</p>`:""}`;
+  } else window._joker = null;
+  const wantJ = odd ? window._joker : null;
+  if(!suggestions.length || suggestions.joker !== wantJ) newSuggestions(true);
   html += suggestions.map((s,i)=>`
     <div class="card sugg ${i===selSugg?"sel":""}" onclick="selSugg=${i};render()" style="margin-bottom:10px">
       <div class="row spread small" style="margin-bottom:8px"><b>Optie ${i+1}</b><span class="muted">sterkte ${s.sa.toFixed(1)} – ${s.sb.toFixed(1)}</span></div>
@@ -442,6 +452,10 @@ function viewTeams(){
     </div>`).join("");
   html += `<div class="row"><button class="btn" onclick="newSuggestions()">🔀 Andere suggesties</button>
     <button class="btn primary" style="flex:1" onclick="confirmTeams()">Optie ${selSugg+1} vastzetten</button></div>
+    <details style="margin-top:12px"><summary class="small muted">🃏 Vaste joker: ${fixed?esc(fixed):"geen"}</summary>
+      <div class="row small" style="margin-top:8px">Bij een oneven aantal wordt automatisch joker:
+        <select onchange="setFixedJoker(this.value)"><option value="">geen (willekeurig)</option>${state.players.map(p=>`<option ${p.name===fixed?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
+    </details>
     <p class="muted small" style="margin-bottom:0">Tik op een speler (⇄) om hem naar het andere team te wisselen. Sterkte = punten per wedstrijd plus een beetje doelsaldo, getal achter de naam = totaal punten.</p></div>`;
   return html;
 }
@@ -621,9 +635,18 @@ function addPlayer(e){ e.preventDefault(); const n=document.getElementById("newN
   mutate(s=>{ if(!s.players.some(p=>p.name===n)) s.players.push({name:n, present:true}); }, n+" toegevoegd"); }
 function removePlayer(){ const n=document.getElementById("delName").value; if(!n||!confirm(n+" verwijderen uit de spelerslijst?")) return;
   mutate(s=>{ s.players=s.players.filter(p=>p.name!==n); }, n+" verwijderd"); }
-function randomJoker(){ const pr=state.players.filter(p=>p.present).map(p=>p.name); window._joker=pr[Math.floor(Math.random()*pr.length)]; newSuggestions(); }
+function fixedJoker(){ return state.fixedJoker === undefined ? "Peter" : state.fixedJoker; }
+// Joker bij oneven aantal: handmatige keuze > vaste joker (als aanwezig) > willekeurig
+function pickJoker(present){
+  if(window._joker && present.includes(window._joker)) return window._joker;
+  const f = fixedJoker();
+  window._joker = f && present.includes(f) ? f : present[Math.floor(Math.random()*present.length)];
+  return window._joker;
+}
+function setFixedJoker(n){ window._joker = null; suggestions = []; mutate(s=>{ s.fixedJoker = n || null; }, n ? n+" is nu de vaste joker" : "Geen vaste joker"); }
+function randomJoker(){ const pr=state.players.filter(p=>p.present).map(p=>p.name); const others=pr.filter(n=>n!==window._joker); const pool=others.length?others:pr; window._joker=pool[Math.floor(Math.random()*pool.length)]; newSuggestions(); }
 function newSuggestions(silent){ const present=state.players.filter(p=>p.present).map(p=>p.name);
-  const joker = present.length%2 ? window._joker : null; suggestions = makeSuggestions(present, joker); selSugg=0; if(!silent) render(); }
+  const joker = present.length%2 ? window._joker : null; suggestions = makeSuggestions(present, joker); suggestions.joker = joker; selSugg=0; if(!silent) render(); }
 function confirmTeams(){
   const s0 = suggestions[selSugg]; if(!s0) return;
   const t = teamsObj(s0.A, s0.B);
