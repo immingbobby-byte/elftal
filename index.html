@@ -87,6 +87,23 @@ td.pts{font-weight:700}
 .status{font-size:12px}
 .err{color:var(--loss)}
 .empty{text-align:center;padding:24px 8px;color:var(--muted)}
+.form{display:inline-flex;gap:3px;vertical-align:middle;margin-left:6px}
+.form i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.form i.W{background:var(--win)} .form i.G{background:var(--draw)} .form i.V{background:var(--loss)}
+.lnk{color:inherit;text-decoration:none;cursor:pointer;border-bottom:1px dotted var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--bg);border-radius:10px;padding:10px;text-align:center}
+.stat b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--muted)}
+.list{list-style:none;margin:0;padding:0}
+.list li{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
+.list li:last-child{border-bottom:0}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:3px}
+.bar>div{height:100%;background:var(--brand)}
+.badge{display:inline-block;min-width:22px;text-align:center;font-weight:700;font-size:12px;padding:1px 6px;border-radius:6px;color:#fff}
+.badge.W{background:var(--win)} .badge.G{background:var(--draw)} .badge.V{background:var(--loss)}
+@media (prefers-color-scheme: dark){.badge{color:#0e1411}}
+.wa{background:#25D366;border-color:#25D366;color:#fff;font-weight:600}
 </style>
 </head>
 <body>
@@ -184,6 +201,34 @@ function computeStats(s){
 }
 function standing(s){
   return Object.values(computeStats(s)).sort((x,y)=> y.pts-x.pts || (y.pts/y.gs)-(x.pts/x.gs) || y.w-x.w || x.name.localeCompare(y.name));
+}
+
+/* ---------- Vorm, reeksen, opkomst, profiel ---------- */
+function chrono(s){ return [...s.uitslagen].sort((x,y)=>(x.dateISO||"").localeCompare(y.dateISO||"")); }
+// Per speler een lijst wedstrijden in chronologische volgorde
+function playerHistory(s){
+  const h = {};
+  for(const u of chrono(s)){
+    const a=+u.scoreA, b=+u.scoreB, A=u.teamA||[], B=u.teamB||[];
+    const add=(n,res,mates,opps,side)=>(h[n]??=[]).push({u,res,mates,opps,side});
+    A.forEach(n=>add(n, a>b?"W":a===b?"G":"V", A.filter(x=>x!==n), B, "A"));
+    B.forEach(n=>add(n, b>a?"W":a===b?"G":"V", B.filter(x=>x!==n), A, "B"));
+    if(u.joker) add(u.joker, a===b?"G":"W", [], [], "J");
+  }
+  return h;
+}
+function streaks(list){
+  let bestW=0, bestUnb=0, w=0, unb=0;
+  for(const m of list){ w = m.res==="W"? w+1:0; unb = m.res!=="V"? unb+1:0; bestW=Math.max(bestW,w); bestUnb=Math.max(bestUnb,unb); }
+  let cur=0, curType=null;
+  for(let i=list.length-1;i>=0;i--){ const r=list[i].res; if(curType===null) curType=r; if(r!==curType) break; cur++; }
+  return {bestW, bestUnb, cur, curType};
+}
+const formDots = (list,n=5)=>`<span class="form" title="laatste ${n}">${list.slice(-n).map(m=>`<i class="${m.res}"></i>`).join("")}</span>`;
+const RES_TXT = {W:"gewonnen", G:"gelijk", V:"verloren"};
+function attendance(s){
+  const total = s.uitslagen.length, h = playerHistory(s);
+  return Object.entries(h).map(([n,l])=>({name:n, n:l.length, pct: total? Math.round(l.length/total*100):0})).sort((x,y)=>y.n-x.n||x.name.localeCompare(y.name));
 }
 
 /* ---------- Teams indelen ---------- */
@@ -287,7 +332,7 @@ function viewTeams(){
         <div class="teams">${teamBox("a", TEAM_A, editCur.A, stats, "cur")}${teamBox("b", TEAM_B, editCur.B, stats, "cur")}</div>
         <div class="row" style="margin-top:10px"><button class="btn" onclick="cancelEditCur()">Annuleren</button><button class="btn primary" style="flex:1" onclick="saveEditCur()">Opslaan</button></div>`
       :`<div class="teams">${teamBox("a", last[0].name, last[0].players.map(p=>p.name), stats)}${teamBox("b", last[1].name, last[1].players.map(p=>p.name), stats)}</div>
-        ${state.lastTeamsLogged?"":`<button class="btn sm" style="margin-top:10px" onclick="startEditCur()">⇄ Spelers wisselen</button>`}`}
+        <div class="row" style="margin-top:10px"><button class="btn sm wa" onclick="shareTeams()">Deel via WhatsApp</button>${state.lastTeamsLogged?"":`<button class="btn sm" onclick="startEditCur()">⇄ Spelers wisselen</button>`}</div>`}
       ${state.currentJoker?`<div class="joker">🃏 Joker: <b>${esc(state.currentJoker)}</b> (speelt voor allebei)</div>`:""}
     </div>`;
   }
@@ -353,7 +398,7 @@ function viewUitslag(){
   html += `<div class="card"><h2>Gespeeld</h2>${state.uitslagen.length?state.uitslagen.map((u,i)=>`
     <div class="match">
       <div class="row spread"><span class="small muted">${esc(u.date)}</span>
-        <span class="row"><button class="btn sm" onclick="editUitslag(${i})">Bewerken</button><button class="btn sm danger" onclick="deleteUitslag(${i})">Verwijder</button></span></div>
+        <span class="row"><button class="btn sm wa" onclick="shareUitslag(${i})" title="Deel via WhatsApp">Deel</button><button class="btn sm" onclick="editUitslag(${i})">Bewerken</button><button class="btn sm danger" onclick="deleteUitslag(${i})">Verwijder</button></span></div>
       <div class="row spread" style="margin-top:4px"><span style="color:var(--a)">${esc(u.teamAName||TEAM_A)}</span><span class="res">${u.scoreA} – ${u.scoreB}</span><span style="color:var(--b)">${esc(u.teamBName||TEAM_B)}</span></div>
       <div class="small muted" style="margin-top:4px">${(u.teamA||[]).map(esc).join(", ")} <b>vs</b> ${(u.teamB||[]).map(esc).join(", ")}${u.joker?` · 🃏 ${esc(u.joker)}`:""}${u.motm?` · ⭐ ${esc(u.motm)}`:""}</div>
     </div>`).join(""):`<div class="empty">Nog geen uitslagen.</div>`}</div>`;
@@ -361,17 +406,106 @@ function viewUitslag(){
 }
 
 function viewStand(){
-  const rows = standing(state);
+  if(profileName) return viewProfile(profileName);
+  const rows = standing(state), h = playerHistory(state);
   let rank = 0, prev = null;
-  return `<div class="card"><h2>Stand <span class="muted small">${state.uitslagen.length} wedstrijden</span></h2>
+  const st = Object.entries(h).map(([n,l])=>({name:n, ...streaks(l)}));
+  const top = (key, filter=()=>true)=>st.filter(filter).sort((a,b)=>b[key]-a[key]||a.name.localeCompare(b.name)).filter((x,i,arr)=>x[key]>0 && x[key]===arr[0][key]);
+  const bestW = top("bestW"), bestU = top("bestUnb");
+  const curW = top("cur", x=>x.curType==="W"), curU = st.filter(x=>x.curType!=="V").map(x=>({...x, unbNow: (()=>{let c=0; for(let i=h[x.name].length-1;i>=0&&h[x.name][i].res!=="V";i--) c++; return c;})()})).sort((a,b)=>b.unbNow-a.unbNow);
+  const curUTop = curU.filter(x=>x.unbNow>0 && x.unbNow===curU[0]?.unbNow);
+  const names = arr=>arr.map(x=>`<a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(x.name)}">${esc(x.name)}</a>`).join(", ");
+  const att = attendance(state), total = state.uitslagen.length;
+  return `<div class="card"><h2>Stand <span class="muted small">${total} wedstrijden</span></h2>
   <table><thead><tr><th>#</th><th>Speler</th><th>Gesp</th><th>W</th><th>G</th><th>V</th><th>Ptn</th></tr></thead><tbody>
-  ${rows.map((p,i)=>{ if(p.pts!==prev){rank=i+1;prev=p.pts;} return `<tr><td>${rank}</td><td>${esc(p.name)}</td><td>${p.gs}</td><td>${p.w}</td><td>${p.g}</td><td>${p.v}</td><td class="pts">${p.pts}</td></tr>`;}).join("")}
+  ${rows.map((p,i)=>{ if(p.pts!==prev){rank=i+1;prev=p.pts;} return `<tr><td>${rank}</td><td><a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(p.name)}">${esc(p.name)}</a>${formDots(h[p.name]||[])}</td><td>${p.gs}</td><td>${p.w}</td><td>${p.g}</td><td>${p.v}</td><td class="pts">${p.pts}</td></tr>`;}).join("")}
   </tbody></table>
-  <p class="muted small" style="margin-bottom:0">Winst 3, gelijk 1. De joker krijgt het resultaat van het winnende team.</p></div>`;
+  <p class="muted small" style="margin-bottom:0">Winst 3, gelijk 1. De joker krijgt het resultaat van het winnende team. Bolletjes = laatste 5 (groen W, geel G, rood V). Tik op een naam voor het profiel.</p></div>
+  <div class="card"><h2>Reeksen</h2><ul class="list">
+    <li><span>🔥 Langste winstreeks</span><span>${bestW.length?`<b>${bestW[0].bestW}</b> · ${names(bestW)}`:"—"}</span></li>
+    <li><span>🛡️ Langst ongeslagen</span><span>${bestU.length?`<b>${bestU[0].bestUnb}</b> · ${names(bestU)}`:"—"}</span></li>
+    <li><span>📈 Nu op winstreeks</span><span>${curW.length?`<b>${curW[0].cur}</b> · ${names(curW)}`:"—"}</span></li>
+    <li><span>✅ Nu ongeslagen</span><span>${curUTop.length?`<b>${curUTop[0].unbNow}</b> · ${names(curUTop)}`:"—"}</span></li>
+  </ul></div>
+  <div class="card"><h2>Opkomst <span class="muted small">van ${total} wedstrijden</span></h2><ul class="list">
+    ${att.map(a=>`<li><span style="flex:1"><a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(a.name)}">${esc(a.name)}</a><div class="bar"><div style="width:${a.pct}%"></div></div></span><span class="small" style="min-width:64px;text-align:right"><b>${a.n}</b>× · ${a.pct}%</span></li>`).join("")}
+  </ul></div>`;
+}
+
+let profileName = null;
+function openProfile(n){ profileName=n; tab="stand"; const u=new URL(location); u.searchParams.set("mode","stand"); u.searchParams.set("speler",n); history_replace(u); render(); scrollTo(0,0); }
+function closeProfile(){ profileName=null; const u=new URL(location); u.searchParams.delete("speler"); history_replace(u); render(); }
+function history_replace(u){ window.history.replaceState(null,"",u); }
+function viewProfile(n){
+  const list = playerHistory(state)[n] || [];
+  const p = computeStats(state)[n] || {w:0,g:0,v:0,gs:0,pts:0};
+  const sk = streaks(list), total = state.uitslagen.length;
+  const winPct = p.gs ? Math.round(p.w/p.gs*100) : 0;
+  const motm = state.uitslagen.filter(u=>u.motm===n).length;
+  const rankRows = standing(state); const rank = rankRows.findIndex(x=>x.name===n)+1;
+  // samenspelers en tegenstanders
+  const mate = {}, opp = {};
+  for(const m of list){
+    for(const x of m.mates){ const o = mate[x] ??= {name:x,n:0,w:0}; o.n++; if(m.res==="W") o.w++; }
+    for(const x of m.opps){ const o = opp[x] ??= {name:x,n:0,v:0,w:0}; o.n++; if(m.res==="V") o.v++; if(m.res==="W") o.w++; }
+  }
+  const pick = (obj,key,min=2)=>Object.values(obj).filter(o=>o.n>=min).sort((a,b)=>(b[key]/b.n)-(a[key]/a.n)||b.n-a.n)[0];
+  const bestMate = pick(mate,"w"), nemesis = pick(opp,"v"), victim = pick(opp,"w");
+  const often = Object.values(mate).sort((a,b)=>b.n-a.n)[0];
+  const lnk = x=>`<a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(x)}">${esc(x)}</a>`;
+  const curTxt = sk.cur ? `${sk.cur}× ${RES_TXT[sk.curType]} op rij` : "—";
+  return `<div class="row" style="margin-bottom:10px"><button class="btn sm" onclick="closeProfile()">← Stand</button></div>
+  <div class="card">
+    <div class="row spread"><h2 style="margin:0;font-size:20px">${esc(n)}</h2>${formDots(list)}</div>
+    <p class="muted small" style="margin:4px 0 12px">${rank?`#${rank} in de stand · `:""}${list.length} van ${total} wedstrijden gespeeld</p>
+    <div class="stats">
+      <div class="stat"><b>${p.pts}</b><span>punten</span></div>
+      <div class="stat"><b>${winPct}%</b><span>gewonnen</span></div>
+      <div class="stat"><b>${p.gs?(p.pts/p.gs).toFixed(1):"0.0"}</b><span>ptn/wedstrijd</span></div>
+      <div class="stat"><b>${p.w}-${p.g}-${p.v}</b><span>W-G-V</span></div>
+      <div class="stat"><b>${total?Math.round(list.length/total*100):0}%</b><span>opkomst</span></div>
+      <div class="stat"><b>${motm}</b><span>⭐ MOTM</span></div>
+    </div>
+  </div>
+  <div class="card"><h2>Reeksen</h2><ul class="list">
+    <li><span>Huidige reeks</span><span>${curTxt}</span></li>
+    <li><span>Langste winstreeks</span><span><b>${sk.bestW}</b></span></li>
+    <li><span>Langst ongeslagen</span><span><b>${sk.bestUnb}</b></span></li>
+  </ul></div>
+  <div class="card"><h2>Samen & tegen</h2><ul class="list">
+    <li><span>🤝 Beste maatje</span><span>${bestMate?`${lnk(bestMate.name)} <span class="muted small">${bestMate.w} van ${bestMate.n} gewonnen</span>`:"—"}</span></li>
+    <li><span>👥 Vaakst samen</span><span>${often?`${lnk(often.name)} <span class="muted small">${often.n}×</span>`:"—"}</span></li>
+    <li><span>😈 Lastigste tegenstander</span><span>${nemesis&&nemesis.v?`${lnk(nemesis.name)} <span class="muted small">${nemesis.v} van ${nemesis.n} verloren</span>`:"—"}</span></li>
+    <li><span>🎯 Makkelijkste tegenstander</span><span>${victim&&victim.w?`${lnk(victim.name)} <span class="muted small">${victim.w} van ${victim.n} gewonnen</span>`:"—"}</span></li>
+  </ul><p class="muted small" style="margin-bottom:0">Telt alleen bij minstens 2 wedstrijden samen of tegen elkaar.</p></div>
+  <div class="card"><h2>Wedstrijden</h2><ul class="list">
+    ${list.length?[...list].reverse().map(m=>{ const u=m.u; const sc = m.side==="B"?`${u.scoreB}–${u.scoreA}`:`${u.scoreA}–${u.scoreB}`;
+      return `<li><span><span class="badge ${m.res}">${m.res}</span> <span class="small">${esc(u.date)}</span>${m.side==="J"?` <span class="tag">🃏 joker</span>`:` <span class="muted small">${esc(m.side==="A"?(u.teamAName||TEAM_A):(u.teamBName||TEAM_B))}</span>`}${u.motm===n?" ⭐":""}</span><span class="res" style="font-size:15px">${m.side==="J"?`${u.scoreA}–${u.scoreB}`:sc}</span></li>`;}).join(""):`<li class="muted">Nog geen wedstrijden.</li>`}
+  </ul></div>`;
+}
+
+/* ---------- Delen ---------- */
+function wa(text){ const url = "https://wa.me/?text=" + encodeURIComponent(text); window.open(url, "_blank"); }
+function shareTeams(){
+  const l = state.lastTeams; if(l?.length!==2) return;
+  const d = new Date().toLocaleDateString("nl-NL",{weekday:"long", day:"numeric", month:"long"});
+  let t = `⚽ *Teams ${d}*\n\n⚪ *${l[0].name}*\n${l[0].players.map(p=>"• "+p.name).join("\n")}\n\n🟠 *${l[1].name}*\n${l[1].players.map(p=>"• "+p.name).join("\n")}`;
+  if(state.currentJoker) t += `\n\n🃏 Joker: ${state.currentJoker}`;
+  t += `\n\n${location.origin}${location.pathname}`;
+  wa(t);
+}
+function shareUitslag(i){
+  const u = state.uitslagen[i];
+  let t = `⚽ *Uitslag ${u.date}*\n\n${u.teamAName||TEAM_A} ${u.scoreA} – ${u.scoreB} ${u.teamBName||TEAM_B}\n\n⚪ ${(u.teamA||[]).join(", ")}\n🟠 ${(u.teamB||[]).join(", ")}`;
+  if(u.joker) t += `\n🃏 ${u.joker}`;
+  if(u.motm) t += `\n⭐ Man of the match: ${u.motm}`;
+  const top = standing(state).slice(0,3).map((p,k)=>`${["🥇","🥈","🥉"][k]} ${p.name} ${p.pts}`).join("  ");
+  t += `\n\n🏆 ${top}\n${location.origin}${location.pathname}?mode=stand`;
+  wa(t);
 }
 
 /* ---------- Acties ---------- */
-function go(t){ tab=t; const u=new URL(location); u.searchParams.set("mode",t); history.replaceState(null,"",u); render(); scrollTo(0,0); }
+function go(t){ tab=t; profileName=null; const u=new URL(location); u.searchParams.set("mode",t); u.searchParams.delete("speler"); window.history.replaceState(null,"",u); render(); scrollTo(0,0); }
 function togglePresent(i){ const n=state.players[i].name, v=!state.players[i].present; state.players[i].present=v; suggestions=[]; render();
   mutate(s=>{const p=s.players.find(p=>p.name===n); if(p) p.present=v;}); }
 function resetPresence(){ if(!confirm("Iedereen afmelden?")) return; suggestions=[]; mutate(s=>s.players.forEach(p=>p.present=false), "Iedereen afgemeld"); }
@@ -423,6 +557,7 @@ document.getElementById("nav").addEventListener("click", e=>{ const b=e.target.c
 (async function init(){
   const m = new URLSearchParams(location.search).get("mode");
   if(["aanwezig","suggestions","uitslag","stand"].includes(m)) tab=m;
+  const sp = new URLSearchParams(location.search).get("speler"); if(sp){ tab="stand"; profileName=sp; }
   render();
   try{ state = await fetchState(); setStatus("Bijgewerkt " + new Date().toLocaleTimeString("nl-NL",{hour:"2-digit",minute:"2-digit"})); }
   catch(e){ setStatus(e.message, true); document.getElementById("app").innerHTML=`<div class="card empty err">${esc(e.message)}</div>`; return; }
