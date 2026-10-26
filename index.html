@@ -160,14 +160,55 @@ function normalize(s){
   s.matches ??= []; s.seasons ??= [];
   return s;
 }
+/* ---------- Seizoenen ---------- */
+let seasonSel = "cur";   // "cur", "all" of index in state.seasons
+const curSeasonName = ()=> state.seasonName || "Huidig seizoen";
+function allState(){ return {...state, uitslagen: [...(state.seasons||[]).flatMap(x=>x.uitslagen||[]), ...state.uitslagen]}; }
+function standState(){
+  if(seasonSel==="all") return allState();
+  if(seasonSel!=="cur" && state.seasons[seasonSel]) return {...state, uitslagen: state.seasons[seasonSel].uitslagen||[]};
+  return state;
+}
+function seasonLabel(){ return seasonSel==="all" ? "Alle seizoenen" : seasonSel!=="cur" && state.seasons[seasonSel] ? state.seasons[seasonSel].name : curSeasonName(); }
+function seasonPicker(){
+  if(!(state.seasons||[]).length) return "";
+  return `<div class="row small" style="margin-bottom:10px">Seizoen:
+    <select onchange="seasonSel=this.value==='cur'||this.value==='all'?this.value:+this.value;render()">
+      <option value="cur" ${seasonSel==="cur"?"selected":""}>${esc(curSeasonName())} (nu)</option>
+      ${state.seasons.map((x,i)=>`<option value="${i}" ${seasonSel===i?"selected":""}>${esc(x.name)}</option>`).reverse().join("")}
+      <option value="all" ${seasonSel==="all"?"selected":""}>Alle seizoenen</option>
+    </select></div>`;
+}
 // Haal altijd eerst de nieuwste versie op, pas de wijziging toe en sla op.
 let queue = Promise.resolve();
-function mutate(fn, msg, allowSetup){ if(!isAdmin && !allowSetup){ toast("Alleen de beheerder kan dit aanpassen"); return Promise.resolve(false); } const run = queue.then(()=>doMutate(fn, msg)); queue = run.catch(()=>{}); return run; }
-async function doMutate(fn, msg){
+function mutate(fn, msg, allowSetup, forceBackup){ if(!isAdmin && !allowSetup){ toast("Alleen de beheerder kan dit aanpassen"); return Promise.resolve(false); } const run = queue.then(()=>doMutate(fn, msg, forceBackup)); queue = run.catch(()=>{}); return run; }
+/* ---------- Automatische back-up ----------
+   Voor een wijziging wordt de vorige versie als extra rij in dezelfde tabel bewaard
+   (maximaal 1 per 10 minuten, of altijd bij belangrijke acties). De laatste 60 blijven bewaard. */
+const BACKUP_EVERY = 10*60*1000, BACKUP_KEEP = 60;
+async function saveBackup(raw){
+  const r = await fetch(`${SB_URL}/rest/v1/elftal_state`, {method:"POST", headers:{...H, Prefer:"return=minimal"}, body: JSON.stringify({id: Date.now(), data: raw})});
+  if(!r.ok) throw new Error("Back-up mislukt (" + r.status + ")");
+  try{ // oude back-ups opruimen
+    const old = await (await fetch(`${SB_URL}/rest/v1/elftal_state?id=neq.${ROW_ID}&select=id&order=created_at.desc&offset=${BACKUP_KEEP}`, {headers:H})).json();
+    if(old.length) await fetch(`${SB_URL}/rest/v1/elftal_state?id=in.(${old.map(o=>o.id).join(",")})`, {method:"DELETE", headers:H});
+  }catch{}
+}
+async function listBackups(){
+  const r = await fetch(`${SB_URL}/rest/v1/elftal_state?id=neq.${ROW_ID}&select=id,created_at,data&order=created_at.desc&limit=${BACKUP_KEEP}`, {headers:H});
+  if(!r.ok) throw new Error("Back-ups laden mislukt (" + r.status + ")");
+  return (await r.json()).map(b=>{ let d={}; try{ d=JSON.parse(b.data); }catch{} return {id:b.id, at:b.created_at, raw:b.data, nU:(d.uitslagen||[]).length, nP:(d.players||[]).length, nS:(d.seasons||[]).length}; });
+}
+async function doMutate(fn, msg, forceBackup){
   setStatus("Opslaan…");
   try{
     const fresh = await fetchState();
+    const before = JSON.stringify(fresh);
     fn(fresh);
+    if(forceBackup || !fresh.lastBackupAt || Date.now() - Date.parse(fresh.lastBackupAt) > BACKUP_EVERY){
+      try{ await saveBackup(before); fresh.lastBackupAt = new Date().toISOString(); }
+      catch(e){ console.warn(e); if(forceBackup) throw e; }
+    }
     const r = await fetch(`${SB_URL}/rest/v1/elftal_state?id=eq.${ROW_ID}`, {
       method: "PATCH", headers: {...H, Prefer: "return=minimal"},
       body: JSON.stringify({data: JSON.stringify(fresh)})
@@ -211,6 +252,19 @@ function viewAdmin(){
   if(isAdmin) return `<div class="card"><h2>🔓 Je bent beheerder</h2>
     <p class="small muted">Op dit apparaat kun je alles aanpassen. Anderen met de link zien alleen de stand.</p>
     <div class="row"><button class="btn" onclick="closeAdmin()">← Terug</button><button class="btn danger" onclick="logout()">Uitloggen</button></div></div>
+    <div class="card"><h2>📅 Seizoenen</h2>
+      <form class="row" onsubmit="renameSeason(event)"><label class="small" style="flex:1;min-width:160px">Naam huidig seizoen<br><input id="sname" value="${esc(curSeasonName())}" style="width:100%"></label><button class="btn">Opslaan</button></form>
+      <p class="small muted">${state.uitslagen.length} wedstrijden in ${esc(curSeasonName())}${state.uitslagen.length?`, vanaf ${esc(chrono(state)[0].date)}`:""}.</p>
+      <form onsubmit="closeSeason(event)"><label class="small">Naam van het nieuwe seizoen<br><input id="snew" placeholder="bijv. Seizoen 2027" style="width:100%"></label>
+        <button class="btn danger" style="width:100%;margin-top:8px" ${state.uitslagen.length?"":"disabled"}>Seizoen afsluiten en nieuw beginnen</button></form>
+      <p class="small muted">De stand begint dan opnieuw. Het oude seizoen blijft terug te kijken via de keuzelijst bij de stand. Spelers blijven staan; de teamindeling kijkt naar alle seizoenen.</p>
+      ${state.seasons.length?`<ul class="list">${state.seasons.map(x=>`<li><span>${esc(x.name)}</span><span class="small muted">${(x.uitslagen||[]).length} wedstr. · ${esc(x.fromDate||"")} – ${esc(x.toDate||"")}</span></li>`).reverse().join("")}</ul>`:""}
+    </div>
+    <div class="card"><h2>🛟 Back-ups</h2>
+      <p class="small muted">Voor elke wijziging wordt automatisch een back-up gemaakt (maximaal elke 10 minuten, en altijd bij verwijderen of seizoen afsluiten). De laatste ${BACKUP_KEEP} worden bewaard.</p>
+      <div class="row"><button class="btn" onclick="backupNow()">Nu back-up maken</button><button class="btn" onclick="downloadJSON(JSON.stringify(state,null,2),'elftal-'+todayISO()+'.json')">⬇ Download huidige data</button></div>
+      <div id="backups" style="margin-top:10px"><button class="btn sm" onclick="showBackups()">Back-ups bekijken</button></div>
+    </div>
     <div class="card"><h2>Wachtwoord wijzigen</h2>
     <form onsubmit="changePw(event)" class="row"><input type="password" id="pw1" placeholder="Nieuw wachtwoord" autocomplete="new-password" style="flex:1;min-width:140px"><input type="password" id="pw2" placeholder="Herhaal" autocomplete="new-password" style="flex:1;min-width:140px"><button class="btn primary">Opslaan</button></form></div>`;
   if(!has) return `<div class="card"><h2>Wachtwoord instellen</h2>
@@ -231,6 +285,28 @@ async function changePw(e){ e.preventDefault(); const a=document.getElementById(
   const h = await hashPw(a), first = !state.adminHash;
   const ok = await mutate(s=>{ if(!first && !isAdmin) throw new Error("Geen rechten"); if(first && s.adminHash) throw new Error("Er is intussen al een wachtwoord ingesteld"); s.adminHash = h; }, first?"Wachtwoord ingesteld":"Wachtwoord gewijzigd", true);
   if(ok){ lsSet(ADMIN_KEY, h); adminView=false; checkAdmin(); if(first) tab="aanwezig"; render(); } }
+
+function renameSeason(e){ e.preventDefault(); const n=document.getElementById("sname").value.trim(); if(!n) return; mutate(s=>{ s.seasonName=n; }, "Naam opgeslagen"); }
+function closeSeason(e){ e.preventDefault(); const nn=document.getElementById("snew").value.trim() || "Seizoen " + (new Date().getFullYear()+1);
+  if(!confirm(`${curSeasonName()} afsluiten en "${nn}" beginnen? De stand begint opnieuw.`)) return;
+  mutate(s=>{ const asc=[...s.uitslagen].sort((a,b)=>(a.dateISO||"").localeCompare(b.dateISO||""));
+    s.seasons.push({name: s.seasonName || ("Seizoen tot " + (asc.at(-1)?.date||todayISO())), fromDate: asc[0]?.date||"", toDate: asc.at(-1)?.date||"", closedAt: new Date().toISOString(), uitslagen: s.uitslagen});
+    s.uitslagen=[]; s.lastTeams=[]; s.currentJoker=null; s.lastTeamsLogged=false; s.seasonName=nn; },
+    "Nieuw seizoen gestart", false, true).then(ok=>{ if(ok){ seasonSel="cur"; render(); } }); }
+async function backupNow(){ if(!isAdmin) return; try{ setStatus("Back-up maken…"); const raw = JSON.stringify(await fetchState()); await saveBackup(raw); setStatus("Back-up gemaakt"); toast("Back-up gemaakt"); showBackups(); }catch(e){ setStatus(e.message,true); toast(e.message); } }
+let backupCache = [];
+async function showBackups(){
+  const el = document.getElementById("backups"); if(!el) return; el.innerHTML = `<p class="small muted">Laden…</p>`;
+  try{ backupCache = await listBackups(); }catch(e){ el.innerHTML = `<p class="small err">${esc(e.message)}</p>`; return; }
+  el.innerHTML = backupCache.length ? `<ul class="list">${backupCache.map((b,i)=>`<li><span class="small"><b>${new Date(b.at).toLocaleString("nl-NL",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</b><br><span class="muted">${b.nU} uitslagen · ${b.nP} spelers${b.nS?` · ${b.nS} oude seizoenen`:""}</span></span>
+    <span class="row" style="flex-wrap:nowrap"><button class="btn sm" onclick="downloadJSON(backupCache[${i}].raw,'elftal-backup-${i}.json')">⬇</button><button class="btn sm" onclick="restoreBackup(${i})">Terugzetten</button></span></li>`).join("")}</ul>` : `<p class="small muted">Nog geen back-ups.</p>`;
+}
+function restoreBackup(i){ const b = backupCache[i]; if(!b) return;
+  if(!confirm(`De data terugzetten naar ${new Date(b.at).toLocaleString("nl-NL")}? Wijzigingen daarna gaan verloren (er wordt eerst nog een back-up van nu gemaakt).`)) return;
+  let snap; try{ snap = normalize(JSON.parse(b.raw)); }catch{ toast("Back-up is beschadigd"); return; }
+  mutate(s=>{ const keep = {adminHash: s.adminHash, fixedJoker: s.fixedJoker}; for(const k of Object.keys(s)) delete s[k]; Object.assign(s, snap, keep); }, "Back-up teruggezet", false, true)
+    .then(ok=>{ if(ok){ suggestions=[]; draft=null; editIdx=null; showBackups(); } }); }
+function downloadJSON(text, name){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type:"application/json"})); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
 
 /* ---------- Stand ---------- */
 function computeStats(s){
@@ -368,7 +444,7 @@ function badgesFor(s){
 }
 const badgeIcons = set=>set&&set.size?`<span class="mini" title="badges">${BADGES.filter(b=>set.has(b.id)).map(b=>b.e).join("")}</span>`:"";
 function makeSuggestions(present, joker, count=3){
-  const stats = computeStats(state);
+  const stats = computeStats(allState());   // sterkte over alle seizoenen
   let pool = present.filter(n => n !== joker);
   const avoid = state.avoidPairs || [];
   const seen = new Set(), out = [];
@@ -445,7 +521,7 @@ function moveIn(A, B, n){ const i=A.indexOf(n); if(i>=0){ A.splice(i,1); B.push(
 document.addEventListener("click", e=>{
   const li = e.target.closest("li.mv"); if(!li) return;
   e.stopPropagation();
-  const n = li.dataset.name, ctx = li.dataset.ctx, stats = computeStats(state);
+  const n = li.dataset.name, ctx = li.dataset.ctx, stats = computeStats(allState());
   if(ctx==="cur"){ moveIn(editCur.A, editCur.B, n) || moveIn(editCur.B, editCur.A, n); }
   else { const sg = suggestions[+ctx.slice(1)]; selSugg = +ctx.slice(1);
     moveIn(sg.A, sg.B, n) || moveIn(sg.B, sg.A, n); sg.sa = teamSum(sg.A, stats); sg.sb = teamSum(sg.B, stats); }
@@ -463,7 +539,7 @@ function saveEditCur(){ const t = teamsObj(editCur.A, editCur.B); draft = null;
 
 function viewTeams(){
   const present = state.players.filter(p=>p.present).map(p=>p.name);
-  const stats = computeStats(state);
+  const stats = computeStats(state), sstats = computeStats(allState());
   const odd = present.length % 2 === 1;
   const last = state.lastTeams?.length === 2 ? state.lastTeams : null;
   let html = "";
@@ -473,7 +549,7 @@ function viewTeams(){
         <div class="teams">${teamBox("a", TEAM_A, editCur.A, stats, "cur")}${teamBox("b", TEAM_B, editCur.B, stats, "cur")}</div>
         <div class="row" style="margin-top:10px"><button class="btn" onclick="cancelEditCur()">Annuleren</button><button class="btn primary" style="flex:1" onclick="saveEditCur()">Opslaan</button></div>`
       :`<div class="teams">${teamBox("a", last[0].name, last[0].players.map(p=>p.name), stats)}${teamBox("b", last[1].name, last[1].players.map(p=>p.name), stats)}</div>
-        ${meter(predict(teamSum(last[0].players.map(p=>p.name),stats), teamSum(last[1].players.map(p=>p.name),stats)))}
+        ${meter(predict(teamSum(last[0].players.map(p=>p.name),sstats), teamSum(last[1].players.map(p=>p.name),sstats)))}
         <div class="row" style="margin-top:10px"><button class="btn sm wa" onclick="shareTeams()">Deel via WhatsApp</button>${state.lastTeamsLogged?"":`<button class="btn sm" onclick="startEditCur()">⇄ Spelers wisselen</button>`}</div>`}
       ${state.currentJoker?`<div class="joker">🃏 Joker: <b>${esc(state.currentJoker)}</b> (speelt voor allebei)</div>`:""}
     </div>`;
@@ -546,7 +622,7 @@ function viewUitslag(){
       <select onchange="draft.motm=this.value"><option value="">—</option>${inMatch.map(n=>`<option ${n===draft.motm?"selected":""}>${esc(n)}</option>`).join("")}</select></label></div>
     <button class="btn primary" style="width:100%;margin-top:12px" onclick="saveUitslag()">${editIdx!==null?"Wijzigingen opslaan":"Uitslag opslaan"}</button>
   </div>`;
-  const fair = fairness(state), fs = [...fair.values()].filter(Boolean);
+  const fair = fairness(allState()), fs = state.uitslagen.map(u=>fair.get(u)).filter(Boolean);
   if(fs.length){
     const favs = fs.filter(f=>f.fav), favWon = favs.filter(f=>f.hit).length, close = fs.filter(f=>f.margin<=1).length;
     const avg = (fs.reduce((t,f)=>t+f.margin,0)/fs.length).toFixed(1);
@@ -571,7 +647,8 @@ function viewUitslag(){
 
 function viewStand(){
   if(profileName) return viewProfile(profileName);
-  const rows = standing(state), h = playerHistory(state);
+  const S = standState();
+  const rows = standing(S), h = playerHistory(S);
   let rank = 0, prev = null;
   const st = Object.entries(h).map(([n,l])=>({name:n, ...streaks(l)}));
   const top = (key, filter=()=>true)=>st.filter(filter).sort((a,b)=>b[key]-a[key]||a.name.localeCompare(b.name)).filter((x,i,arr)=>x[key]>0 && x[key]===arr[0][key]);
@@ -579,9 +656,9 @@ function viewStand(){
   const curW = top("cur", x=>x.curType==="W"), curU = st.filter(x=>x.curType!=="V").map(x=>({...x, unbNow: (()=>{let c=0; for(let i=h[x.name].length-1;i>=0&&h[x.name][i].res!=="V";i--) c++; return c;})()})).sort((a,b)=>b.unbNow-a.unbNow);
   const curUTop = curU.filter(x=>x.unbNow>0 && x.unbNow===curU[0]?.unbNow);
   const names = arr=>arr.map(x=>`<a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(x.name)}">${esc(x.name)}</a>`).join(", ");
-  const att = attendance(state), total = state.uitslagen.length, bd = badgesFor(state);
+  const att = attendance(S), total = S.uitslagen.length, bd = badgesFor(S);
   const holders = id=>Object.keys(bd).filter(n=>bd[n].has(id)).sort();
-  return `<div class="card"><h2>Stand <span class="muted small">${total} wedstrijden</span></h2>
+  return `${seasonPicker()}<div class="card"><h2>Stand <span class="muted small">${esc(seasonLabel())} · ${total} wedstrijden</span></h2>
   <table><thead><tr><th>#</th><th>Speler</th><th>Gesp</th><th>W</th><th>G</th><th>V</th><th>Ptn</th></tr></thead><tbody>
   ${rows.map((p,i)=>{ if(p.pts!==prev){rank=i+1;prev=p.pts;} return `<tr><td>${rank}</td><td><a class="lnk" onclick="openProfile(this.dataset.n)" data-n="${esc(p.name)}">${esc(p.name)}</a>${formDots(h[p.name]||[])}${badgeIcons(bd[p.name])}</td><td>${p.gs}</td><td>${p.w}</td><td>${p.g}</td><td>${p.v}</td><td class="pts">${p.pts}</td></tr>`;}).join("")}
   </tbody></table>
@@ -605,12 +682,13 @@ function openProfile(n){ profileName=n; tab="stand"; const u=new URL(location); 
 function closeProfile(){ profileName=null; const u=new URL(location); u.searchParams.delete("speler"); history_replace(u); render(); }
 function history_replace(u){ window.history.replaceState(null,"",u); }
 function viewProfile(n){
-  const list = playerHistory(state)[n] || [];
-  const p = computeStats(state)[n] || {w:0,g:0,v:0,gs:0,pts:0};
-  const sk = streaks(list), total = state.uitslagen.length;
+  const S = standState();
+  const list = playerHistory(S)[n] || [];
+  const p = computeStats(S)[n] || {w:0,g:0,v:0,gs:0,pts:0};
+  const sk = streaks(list), total = S.uitslagen.length;
   const winPct = p.gs ? Math.round(p.w/p.gs*100) : 0;
-  const motm = state.uitslagen.filter(u=>u.motm===n).length;
-  const rankRows = standing(state); const rank = rankRows.findIndex(x=>x.name===n)+1;
+  const motm = S.uitslagen.filter(u=>u.motm===n).length;
+  const rankRows = standing(S); const rank = rankRows.findIndex(x=>x.name===n)+1;
   // samenspelers en tegenstanders
   const mate = {}, opp = {};
   for(const m of list){
@@ -625,7 +703,7 @@ function viewProfile(n){
   return `<div class="row" style="margin-bottom:10px"><button class="btn sm" onclick="closeProfile()">← Stand</button></div>
   <div class="card">
     <div class="row spread"><h2 style="margin:0;font-size:20px">${esc(n)}</h2>${formDots(list)}</div>
-    <p class="muted small" style="margin:4px 0 12px">${rank?`#${rank} in de stand · `:""}${list.length} van ${total} wedstrijden gespeeld</p>
+    ${seasonPicker()}<p class="muted small" style="margin:4px 0 12px">${esc(seasonLabel())} · ${rank?`#${rank} in de stand · `:""}${list.length} van ${total} wedstrijden gespeeld</p>
     <div class="stats">
       <div class="stat"><b>${p.pts}</b><span>punten</span></div>
       <div class="stat"><b>${winPct}%</b><span>gewonnen</span></div>
@@ -635,8 +713,8 @@ function viewProfile(n){
       <div class="stat"><b>${motm}</b><span>⭐ MOTM</span></div>
     </div>
   </div>
-  <div class="card"><h2>Badges <span class="muted small">${(badgesFor(state)[n]||new Set()).size} van ${BADGES.length}</span></h2><div class="badges">
-    ${(()=>{ const mine = badgesFor(state)[n]||new Set(); return [...BADGES].sort((a,b)=>mine.has(b.id)-mine.has(a.id)).map(b=>`<span class="bdg ${mine.has(b.id)?"":"off"}" title="${esc(b.d)}">${b.e} ${b.n}</span>`).join(""); })()}
+  <div class="card"><h2>Badges <span class="muted small">${(badgesFor(S)[n]||new Set()).size} van ${BADGES.length}</span></h2><div class="badges">
+    ${(()=>{ const mine = badgesFor(S)[n]||new Set(); return [...BADGES].sort((a,b)=>mine.has(b.id)-mine.has(a.id)).map(b=>`<span class="bdg ${mine.has(b.id)?"":"off"}" title="${esc(b.d)}">${b.e} ${b.n}</span>`).join(""); })()}
   </div><p class="muted small" style="margin-bottom:0">Grijs = nog te verdienen. Houd je vinger op een badge voor uitleg.</p></div>
   <div class="card"><h2>Reeksen</h2><ul class="list">
     <li><span>Huidige reeks</span><span>${curTxt}</span></li>
@@ -684,7 +762,7 @@ function addPlayer(e){ e.preventDefault(); const n=document.getElementById("newN
   if(state.players.some(p=>p.name.toLowerCase()===n.toLowerCase())){ toast("Bestaat al"); return; }
   mutate(s=>{ if(!s.players.some(p=>p.name===n)) s.players.push({name:n, present:true}); }, n+" toegevoegd"); }
 function removePlayer(){ const n=document.getElementById("delName").value; if(!n||!confirm(n+" verwijderen uit de spelerslijst?")) return;
-  mutate(s=>{ s.players=s.players.filter(p=>p.name!==n); }, n+" verwijderd"); }
+  mutate(s=>{ s.players=s.players.filter(p=>p.name!==n); }, n+" verwijderd", false, true); }
 function jokerSetting(fixed){ return `<details style="margin-top:12px"><summary class="small muted">🃏 Vaste joker: ${fixed?esc(fixed):"geen"}</summary>
       <div class="row small" style="margin-top:8px">Bij een oneven aantal wordt automatisch joker:
         <select onchange="setFixedJoker(this.value)"><option value="">geen (willekeurig)</option>${state.players.map(p=>`<option ${p.name===fixed?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
@@ -734,7 +812,7 @@ function editUitslag(i){ editIdx=i; draft=draftFromUitslag(state.uitslagen[i]); 
 function cancelEdit(){ editIdx=null; draft=null; render(); }
 function deleteUitslag(i){ const u=state.uitslagen[i]; if(!confirm(`Uitslag van ${u.date} (${u.scoreA}-${u.scoreB}) verwijderen?`)) return;
   const key=JSON.stringify(u); editIdx=null; draft=null;
-  mutate(s=>{ s.uitslagen=s.uitslagen.filter(x=>JSON.stringify(x)!==key); }, "Uitslag verwijderd"); }
+  mutate(s=>{ s.uitslagen=s.uitslagen.filter(x=>JSON.stringify(x)!==key); }, "Uitslag verwijderd", false, true); }
 
 /* ---------- Start ---------- */
 document.getElementById("nav").addEventListener("click", e=>{ const b=e.target.closest("button"); if(b) go(b.dataset.tab); });
