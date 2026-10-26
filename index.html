@@ -113,6 +113,11 @@ td.pts{font-weight:700}
 .verdict{font-size:12px;margin-top:4px;padding:4px 8px;border-radius:8px;background:var(--bg);display:inline-block}
 .meter{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:6px 0 2px}
 .meter>div:first-child{background:var(--a)} .meter>div:last-child{background:var(--b)}
+textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%;min-height:110px;resize:vertical}
+.pm{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
+.pm:last-child{border-bottom:0}
+.pm .src{color:var(--muted);font-size:12px}
+.tagok{color:var(--win);font-weight:600} .tagq{color:var(--draw);font-weight:600} .tagno{color:var(--muted)}
 .wa{background:#25D366;border-color:#25D366;color:#fff;font-weight:600}
 </style>
 </head>
@@ -488,6 +493,7 @@ window.addEventListener("error", e=>{ try{ toast("Fout: " + (e.message||"onbeken
 function viewAanwezig(){
   const pres = state.players.filter(p=>p.present).length;
   return `
+  ${viewPaste()}
   <div class="card">
     <div class="row spread"><h2>Wie is er? <span class="muted small">${pres} van ${state.players.length}</span></h2>
       <button class="btn sm" onclick="resetPresence()">Iedereen afmelden</button></div>
@@ -767,6 +773,72 @@ function jokerSetting(fixed){ return `<details style="margin-top:12px"><summary 
       <div class="row small" style="margin-top:8px">Bij een oneven aantal wordt automatisch joker:
         <select onchange="setFixedJoker(this.value)"><option value="">geen (willekeurig)</option>${state.players.map(p=>`<option ${p.name===fixed?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
     </details>`; }
+/* ---------- Aanmelden via WhatsApp (plakken) ---------- */
+let pasteOpen = false, pasteText = "", pasteRes = null, pasteReplace = true;
+const norm = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+function lev(a,b){ const d=[...Array(b.length+1).keys()]; for(let i=1;i<=a.length;i++){ let prev=d[0]; d[0]=i; for(let j=1;j<=b.length;j++){ const t=d[j]; d[j]=Math.min(d[j]+1, d[j-1]+1, prev+(a[i-1]===b[j-1]?0:1)); prev=t; } } return d[b.length]; }
+// Haal namen uit een geplakt WhatsApp-lijstje. Regels onder een kopje als "afgemeld" of met ❌ tellen niet mee.
+function parsePaste(text){
+  const out = []; let skip = false;
+  for(let line of text.split(/\r?\n/)){
+    line = line.replace(/^\s*\[[^\]]*\]\s*/,"").replace(/^\s*\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4},?\s+\d{1,2}:\d{2}\s*-\s*/,"");
+    const low = line.toLowerCase();
+    if(/afgemeld|afmeld|kan niet|niet aanwezig|afwezig|helaas niet|komen niet|^\s*niet\b/.test(low)){ skip = true; if(!/[:]\s*\S/.test(line)) continue; line = line.split(":").slice(1).join(":"); }
+    else if(/aanwezig|aangemeld|wie komt|komen|erbij|deelnemers|lijst/.test(low) && !/\d\s*[.)]/.test(line)){ skip = false; if(!/[:]\s*\S/.test(line)) continue; line = line.split(":").slice(1).join(":"); }
+    if(skip || /❌|✖|🚫/.test(line)) continue;
+    line = line.replace(/^\s*(\d+\s*[.)\-:]|[-•*·–]|\+)\s*/,"");
+    for(let part of line.split(/,|;|\/|\s+en\s+|&/)){
+      part = part.replace(/[^\p{L}\p{N}\s.'-]/gu," ").replace(/\b(ik|ben|erbij|aanwezig|ja|komt|kom|graag|ook|plus|\+1)\b/gi," ").replace(/\s+/g," ").trim();
+      if(/\d/.test(part) || part.split(" ").length>3 || /\b(voetbal|training|wedstrijd|maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|vanavond|morgen|uur|veld)\b/i.test(part)) continue;
+      if(part.length>=2 && part.length<=30 && /\p{L}/u.test(part)) out.push(part);
+    }
+  }
+  return [...new Map(out.map(x=>[norm(x),x])).values()];
+}
+function matchName(raw){
+  const n = norm(raw), players = state.players.map(p=>p.name), N = players.map(norm);
+  let i = N.indexOf(n); if(i>=0) return {status:"ok", name:players[i]};
+  const first = players.filter((p,k)=>N[k].split(" ")[0]===n || N[k].replace(/ /g,"")===n.replace(/ /g,""));
+  if(first.length===1) return {status:"ok", name:first[0]};
+  if(first.length>1) return {status:"ambig", options:first};
+  const starts = players.filter((p,k)=>N[k].startsWith(n) && n.length>=3);
+  if(starts.length===1) return {status:"ok", name:starts[0]};
+  if(starts.length>1) return {status:"ambig", options:starts};
+  const scored = players.map((p,k)=>({p, d: Math.min(lev(n,N[k]), lev(n,N[k].split(" ")[0]))})).sort((a,b)=>a.d-b.d);
+  const max = n.length>=6 ? 2 : 1;
+  if(scored[0] && scored[0].d<=max){ const best = scored.filter(x=>x.d===scored[0].d); if(best.length===1) return {status:"ok", name:best[0].p, fuzzy:true}; return {status:"ambig", options:best.map(x=>x.p)}; }
+  return {status:"new"};
+}
+function runPaste(){ pasteText = document.getElementById("pasteTxt").value; pasteRes = parsePaste(pasteText).map(raw=>({raw, ...matchName(raw), pick:null, add:false})); 
+  pasteRes.forEach(r=>{ if(r.status==="ambig") r.pick = r.options[0]; }); render(); }
+function viewPaste(){
+  if(!pasteOpen) return `<button class="btn wa" style="width:100%;margin-bottom:12px" onclick="pasteOpen=true;render()">📋 Aanmelden vanuit WhatsApp</button>`;
+  let html = `<div class="card"><div class="row spread"><h2>📋 Plak uit WhatsApp</h2><button class="btn sm" onclick="pasteOpen=false;pasteRes=null;pasteText='';render()">Sluiten</button></div>
+    <p class="small muted" style="margin-top:0">Kopieer het lijstje uit de groepsapp en plak het hieronder. Namen onder "afgemeld" of met ❌ worden overgeslagen.</p>
+    <textarea id="pasteTxt" placeholder="1. Jamie\n2. Peter ✅\n3. alex j\n\nAfgemeld: Rob">${esc(pasteText)}</textarea>
+    <button class="btn primary" style="width:100%;margin-top:8px" onclick="runPaste()">Namen herkennen</button>`;
+  if(pasteRes){
+    const ok = pasteRes.filter(r=>r.status==="ok"||(r.status==="ambig"&&r.pick)||(r.status==="new"&&r.add)).length;
+    html += `<div style="margin-top:12px">${pasteRes.length?pasteRes.map((r,i)=>`<div class="pm"><span>${
+      r.status==="ok" ? `<span class="tagok">✓ ${esc(r.name)}</span>${norm(r.raw)!==norm(r.name)?` <span class="src">uit "${esc(r.raw)}"${r.fuzzy?" (lijkt op)":""}</span>`:""}` :
+      r.status==="ambig" ? `<span class="tagq">? "${esc(r.raw)}"</span>` :
+      `<span class="tagno">"${esc(r.raw)}" onbekend</span>`}</span><span>${
+      r.status==="ambig" ? `<select onchange="pasteRes[${i}].pick=this.value;render()">${r.options.map(o=>`<option ${o===r.pick?"selected":""}>${esc(o)}</option>`).join("")}<option value="">overslaan</option></select>` :
+      r.status==="new" ? `<label class="small"><input type="checkbox" ${r.add?"checked":""} onchange="pasteRes[${i}].add=this.checked;render()"> toevoegen</label>` : ""}</span></div>`).join(""):`<p class="small muted">Geen namen gevonden.</p>`}</div>
+      <label class="small row" style="margin-top:10px"><input type="checkbox" ${pasteReplace?"checked":""} onchange="pasteReplace=this.checked"> Wie niet in de lijst staat afmelden</label>
+      <button class="btn primary" style="width:100%;margin-top:8px" onclick="applyPaste()" ${pasteRes.length?"":"disabled"}>Zet ${ok} speler${ok===1?"":"s"} op aanwezig</button>`;
+  }
+  return html + `</div>`;
+}
+function applyPaste(){
+  const names = new Set(), adds = [];
+  for(const r of pasteRes){ if(r.status==="ok") names.add(r.name); else if(r.status==="ambig" && r.pick) names.add(r.pick); else if(r.status==="new" && r.add){ const nm = r.raw.replace(/\b\w/g,c=>c.toUpperCase()); adds.push(nm); names.add(nm); } }
+  const replace = pasteReplace;
+  mutate(s=>{ for(const a of adds) if(!s.players.some(p=>norm(p.name)===norm(a))) s.players.push({name:a, present:false});
+    for(const p of s.players){ if(names.has(p.name)) p.present = true; else if(replace) p.present = false; } },
+    `${names.size} speler${names.size===1?"":"s"} aangemeld`).then(ok=>{ if(ok){ pasteOpen=false; pasteRes=null; pasteText=""; suggestions=[]; render(); } });
+}
+
 function fixedJoker(){ return state.fixedJoker === undefined ? "Peter" : state.fixedJoker; }
 // Joker bij oneven aantal: handmatige keuze > vaste joker (als aanwezig) > willekeurig
 function pickJoker(present){
