@@ -789,7 +789,8 @@ function parsePaste(text){
     line = line.replace(/^\s*(\d+\s*[.)\-:]|[-•*·–]|\+)\s*/,"");
     for(let part of line.split(/,|;|\/|\s+en\s+|&/)){
       part = part.replace(/[^\p{L}\p{N}\s.'-]/gu," ").replace(/\b(ik|ben|erbij|aanwezig|ja|komt|kom|graag|ook|plus|\+1)\b/gi," ").replace(/\s+/g," ").trim();
-      if(/\d/.test(part) || part.split(" ").length>3 || /\b(voetbal|training|wedstrijd|maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|vanavond|morgen|uur|veld)\b/i.test(part)) continue;
+      if(/\d/.test(part) || part.split(" ").length>3) continue;
+      if(/\b(voetbal|training|wedstrijd|maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|vanavond|morgen|uur|veld)\b/i.test(part) && state && matchName(part).status!=="ok") continue;
       if(part.length>=2 && part.length<=30 && /\p{L}/u.test(part)) out.push(part);
     }
   }
@@ -797,7 +798,18 @@ function parsePaste(text){
 }
 function matchName(raw){
   const n = norm(raw), players = state.players.map(p=>p.name), N = players.map(norm);
+  if(["jij","you","ik","me"].includes(n)){ const me = state.adminName && players.includes(state.adminName) ? state.adminName : (players.find(p=>norm(p)==="bobby")||players[0]);
+    return {status:"ambig", options:[me, ...players.filter(p=>p!==me)], me:true}; }
   let i = N.indexOf(n); if(i>=0) return {status:"ok", name:players[i]};
+  // contactnaam zoals "Jamie Voetbal" of "Alex Jansen": kijk naar voornaam (+ eerste letter achternaam)
+  const w = n.split(" ");
+  if(w.length>1){
+    const byFirst = players.filter((p,k)=>N[k]===w[0] || N[k].split(" ")[0]===w[0]);
+    if(byFirst.length===1) return {status:"ok", name:byFirst[0], fuzzy:true};
+    if(byFirst.length>1){ const ini = byFirst.filter(p=>norm(p).split(" ").slice(1).some(x=>w.slice(1).some(y=>y.startsWith(x)||x.startsWith(y))));
+      if(ini.length===1) return {status:"ok", name:ini[0], fuzzy:true};
+      return {status:"ambig", options:byFirst}; }
+  }
   const first = players.filter((p,k)=>N[k].split(" ")[0]===n || N[k].replace(/ /g,"")===n.replace(/ /g,""));
   if(first.length===1) return {status:"ok", name:first[0]};
   if(first.length>1) return {status:"ambig", options:first};
@@ -809,19 +821,22 @@ function matchName(raw){
   if(scored[0] && scored[0].d<=max){ const best = scored.filter(x=>x.d===scored[0].d); if(best.length===1) return {status:"ok", name:best[0].p, fuzzy:true}; return {status:"ambig", options:best.map(x=>x.p)}; }
   return {status:"new"};
 }
-function runPaste(){ pasteText = document.getElementById("pasteTxt").value; pasteRes = parsePaste(pasteText).map(raw=>({raw, ...matchName(raw), pick:null, add:false})); 
+function runPaste(text, names){ pasteText = text!==undefined ? text : document.getElementById("pasteTxt").value; pasteRes = (names || parsePaste(pasteText)).map(raw=>({raw, ...matchName(raw), pick:null, add:false})); 
   pasteRes.forEach(r=>{ if(r.status==="ambig") r.pick = r.options[0]; }); render(); }
 function viewPaste(){
-  if(!pasteOpen) return `<button class="btn wa" style="width:100%;margin-bottom:12px" onclick="pasteOpen=true;render()">📋 Aanmelden vanuit WhatsApp</button>`;
-  let html = `<div class="card"><div class="row spread"><h2>📋 Plak uit WhatsApp</h2><button class="btn sm" onclick="pasteOpen=false;pasteRes=null;pasteText='';render()">Sluiten</button></div>
-    <p class="small muted" style="margin-top:0">Kopieer het lijstje uit de groepsapp en plak het hieronder. Namen onder "afgemeld" of met ❌ worden overgeslagen.</p>
+  const shotBtn = (cls)=>`<label class="btn ${cls}" style="flex:1;text-align:center">📷 Poll-screenshot<input type="file" accept="image/*" multiple hidden onchange="ocrFiles(this.files)"></label>`;
+  if(!pasteOpen) return `<div class="row" style="margin-bottom:12px;flex-wrap:nowrap">${shotBtn("wa")}<button class="btn wa" style="flex:1" onclick="pasteOpen=true;render()">📋 Lijstje plakken</button></div>`;
+  let html = `<div class="card"><div class="row spread"><h2>📋 Aanmelden vanuit WhatsApp</h2><button class="btn sm" onclick="pasteOpen=false;pasteRes=null;pasteText='';ocrMsg='';render()">Sluiten</button></div>
+    <div class="row" style="margin-bottom:8px">${shotBtn("")}</div>
+    ${ocrMsg?`<p class="small" style="margin:0 0 8px">${esc(ocrMsg)}</p>`:""}
+    <p class="small muted" style="margin-top:0">Upload een screenshot van <b>Stemmen bekijken</b> uit de WhatsApp-poll (alleen de namen onder "Ja" tellen), of plak een lijstje. Namen onder "afgemeld"/"Nee" of met ❌ worden overgeslagen.</p>
     <textarea id="pasteTxt" placeholder="1. Jamie\n2. Peter ✅\n3. alex j\n\nAfgemeld: Rob">${esc(pasteText)}</textarea>
     <button class="btn primary" style="width:100%;margin-top:8px" onclick="runPaste()">Namen herkennen</button>`;
   if(pasteRes){
     const ok = pasteRes.filter(r=>r.status==="ok"||(r.status==="ambig"&&r.pick)||(r.status==="new"&&r.add)).length;
     html += `<div style="margin-top:12px">${pasteRes.length?pasteRes.map((r,i)=>`<div class="pm"><span>${
       r.status==="ok" ? `<span class="tagok">✓ ${esc(r.name)}</span>${norm(r.raw)!==norm(r.name)?` <span class="src">uit "${esc(r.raw)}"${r.fuzzy?" (lijkt op)":""}</span>`:""}` :
-      r.status==="ambig" ? `<span class="tagq">? "${esc(r.raw)}"</span>` :
+      r.status==="ambig" ? `<span class="tagq">? "${esc(r.raw)}"${r.me?` <span class="src">(jijzelf)</span>`:""}</span>` :
       `<span class="tagno">"${esc(r.raw)}" onbekend</span>`}</span><span>${
       r.status==="ambig" ? `<select onchange="pasteRes[${i}].pick=this.value;render()">${r.options.map(o=>`<option ${o===r.pick?"selected":""}>${esc(o)}</option>`).join("")}<option value="">overslaan</option></select>` :
       r.status==="new" ? `<label class="small"><input type="checkbox" ${r.add?"checked":""} onchange="pasteRes[${i}].add=this.checked;render()"> toevoegen</label>` : ""}</span></div>`).join(""):`<p class="small muted">Geen namen gevonden.</p>`}</div>
@@ -830,13 +845,57 @@ function viewPaste(){
   }
   return html + `</div>`;
 }
+/* ---------- Poll-screenshot uitlezen (OCR op het apparaat zelf) ---------- */
+let ocrMsg = "", tessLoading = null;
+function loadTesseract(){
+  if(window.Tesseract) return Promise.resolve();
+  return tessLoading ??= new Promise((res, rej)=>{ const sc=document.createElement("script"); sc.src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"; sc.onload=res; sc.onerror=()=>{ tessLoading=null; rej(new Error("Tekstherkenning kon niet laden (geen internet?)")); }; document.head.appendChild(sc); });
+}
+// Maak het plaatje beter leesbaar: grijs, donkere modus omkeren, vergroten
+function prepImage(file){ return new Promise((res, rej)=>{ const img=new Image(); img.onload=()=>{
+  const scale = img.width < 1000 ? 2 : 1, c=document.createElement("canvas"); c.width=img.width*scale; c.height=img.height*scale;
+  const x=c.getContext("2d"); x.drawImage(img,0,0,c.width,c.height); const d=x.getImageData(0,0,c.width,c.height), a=d.data; let sum=0;
+  for(let i=0;i<a.length;i+=4){ const g=0.299*a[i]+0.587*a[i+1]+0.114*a[i+2]; a[i]=a[i+1]=a[i+2]=g; sum+=g; }
+  if(sum/(a.length/4) < 110) for(let i=0;i<a.length;i+=4){ a[i]=a[i+1]=a[i+2]=255-a[i]; }
+  x.putImageData(d,0,0); URL.revokeObjectURL(img.src); res(c); }; img.onerror=()=>rej(new Error("Afbeelding kon niet worden geopend")); img.src=URL.createObjectURL(file); }); }
+// Uit de OCR-tekst van "Stemmen bekijken": namen onder "Ja" tot aan "Nee"
+function parsePoll(text){
+  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const hasJa = lines.some(l=>/^(ja|yes)\b/i.test(l));
+  let mode = hasJa ? null : "ja"; const out = [];
+  for(const l of lines){
+    if(/^(ja|yes)\b/i.test(l)){ mode="ja"; continue; }
+    if(/^(nee|no|misschien|maybe)\b/i.test(l)){ mode="other"; continue; }
+    if(mode!=="ja") continue;
+    if(/\d/.test(l) || /^(vandaag|gisteren|today|yesterday|pollgegevens|poll details|alles bekijken|view all|meer|stem)/i.test(l)) continue;
+    const name = l.replace(/[^\p{L}\s.'-]/gu," ").split(/\s+/).filter(w=>w.length>1 || /^[A-Z]$/.test(w)).join(" ").trim();
+    if(name.length>=2 && name.split(" ").length<=4) out.push(name);
+  }
+  return [...new Map(out.map(x=>[norm(x),x])).values()];
+}
+async function ocrFiles(files){
+  if(!files || !files.length) return;
+  pasteOpen = true; pasteRes = null; ocrMsg = "Tekstherkenning laden…"; render();
+  try{
+    await loadTesseract();
+    const worker = await Tesseract.createWorker("nld", 1, { logger: m=>{ if(m.status==="recognizing text"){ ocrMsg = `Screenshot lezen… ${Math.round(m.progress*100)}%`; const el=document.querySelector("#app .card p.small"); if(el && el.textContent.startsWith("Screenshot")) el.textContent = ocrMsg; } } });
+    let names = [];
+    for(let i=0;i<files.length;i++){ ocrMsg = `Screenshot ${i+1} van ${files.length} lezen…`; render();
+      const canvas = await prepImage(files[i]); const { data } = await worker.recognize(canvas); names.push(...parsePoll(data.text)); }
+    await worker.terminate();
+    names = [...new Map(names.map(x=>[norm(x),x])).values()];
+    ocrMsg = names.length ? `${names.length} namen gevonden onder "Ja". Controleer de lijst hieronder.` : `Geen namen gevonden. Maak een screenshot van "Stemmen bekijken" waar "Ja" bovenaan staat.`;
+    runPaste(names.join("\n"), names);
+  }catch(e){ ocrMsg = e.message || String(e); render(); }
+}
 function applyPaste(){
   const names = new Set(), adds = [];
+  const meName = (pasteRes.find(r=>r.me && r.pick)||{}).pick;
   for(const r of pasteRes){ if(r.status==="ok") names.add(r.name); else if(r.status==="ambig" && r.pick) names.add(r.pick); else if(r.status==="new" && r.add){ const nm = r.raw.replace(/\b\w/g,c=>c.toUpperCase()); adds.push(nm); names.add(nm); } }
   const replace = pasteReplace;
-  mutate(s=>{ for(const a of adds) if(!s.players.some(p=>norm(p.name)===norm(a))) s.players.push({name:a, present:false});
+  mutate(s=>{ if(meName) s.adminName = meName; for(const a of adds) if(!s.players.some(p=>norm(p.name)===norm(a))) s.players.push({name:a, present:false});
     for(const p of s.players){ if(names.has(p.name)) p.present = true; else if(replace) p.present = false; } },
-    `${names.size} speler${names.size===1?"":"s"} aangemeld`).then(ok=>{ if(ok){ pasteOpen=false; pasteRes=null; pasteText=""; suggestions=[]; render(); } });
+    `${names.size} speler${names.size===1?"":"s"} aangemeld`).then(ok=>{ if(ok){ pasteOpen=false; pasteRes=null; pasteText=""; ocrMsg=""; suggestions=[]; render(); } });
 }
 
 function fixedJoker(){ return state.fixedJoker === undefined ? "Peter" : state.fixedJoker; }
