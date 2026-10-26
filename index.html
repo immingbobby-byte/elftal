@@ -29,6 +29,9 @@ header{background:var(--brand);color:var(--brand-ink);padding:16px 16px 14px}
 @media (prefers-color-scheme: dark){header{background:#123321;color:var(--ink)}}
 header h1{margin:0;font-size:20px;letter-spacing:.2px}
 header .sub{font-size:13px;opacity:.8}
+.hbtn{background:rgba(255,255,255,.15);color:inherit;border:1px solid rgba(255,255,255,.3);border-radius:99px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+body.viewer nav{display:none}
+body.viewer{padding-bottom:16px}
 main{max-width:640px;margin:0 auto;padding:14px 16px}
 nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom);z-index:5}
 nav button{flex:1;max-width:160px;background:none;border:0;color:var(--muted);padding:9px 4px 10px;font:inherit;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px}
@@ -115,8 +118,10 @@ td.pts{font-weight:700}
 </head>
 <body>
 <header>
-  <h1>⚽ Elftal</h1>
-  <div class="sub" id="status">Laden…</div>
+  <div class="row spread" style="flex-wrap:nowrap">
+    <div><h1>⚽ Elftal</h1><div class="sub" id="status">Laden…</div></div>
+    <button id="adminBtn" class="hbtn" onclick="openAdmin()">🔒 Beheer</button>
+  </div>
 </header>
 <main id="app"></main>
 <nav id="nav">
@@ -157,7 +162,7 @@ function normalize(s){
 }
 // Haal altijd eerst de nieuwste versie op, pas de wijziging toe en sla op.
 let queue = Promise.resolve();
-function mutate(fn, msg){ const run = queue.then(()=>doMutate(fn, msg)); queue = run.catch(()=>{}); return run; }
+function mutate(fn, msg, allowSetup){ if(!isAdmin && !allowSetup){ toast("Alleen de beheerder kan dit aanpassen"); return Promise.resolve(false); } const run = queue.then(()=>doMutate(fn, msg)); queue = run.catch(()=>{}); return run; }
 async function doMutate(fn, msg){
   setStatus("Opslaan…");
   try{
@@ -168,7 +173,7 @@ async function doMutate(fn, msg){
       body: JSON.stringify({data: JSON.stringify(fresh)})
     });
     if(!r.ok) throw new Error("Opslaan mislukt (" + r.status + ")");
-    state = fresh;
+    state = fresh; checkAdmin();
     setStatus("Opgeslagen");
     if(msg) toast(msg);
     render();
@@ -185,6 +190,47 @@ function toast(t){const el=document.getElementById("toast");el.textContent=t;el.
 function setStatus(t, err){const el=document.getElementById("status");el.textContent=t;el.className="sub"+(err?" err":"");}
 function todayISO(){const d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);}
 function fmtDate(iso){const [y,m,d]=iso.split("-").map(Number);return `${d} ${MONTHS[m-1]} ${y}`;}
+
+/* ---------- Beheer (wachtwoord) ---------- */
+// Let op: dit is een afscherming in de app zelf. Kijkers zien alleen de stand.
+const ADMIN_KEY = "elftal_admin";
+let isAdmin = false, adminView = false;
+const lsGet = k=>{ try{ return localStorage.getItem(k); }catch{ return null; } };
+const lsSet = (k,v)=>{ try{ v===null ? localStorage.removeItem(k) : localStorage.setItem(k,v); }catch{} };
+async function hashPw(pw){ const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("elftal-v1:" + pw)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+function checkAdmin(){
+  isAdmin = !!(state && state.adminHash && lsGet(ADMIN_KEY) === state.adminHash);
+  document.body.classList.toggle("viewer", !isAdmin);
+  const b = document.getElementById("adminBtn"); if(b) b.textContent = isAdmin ? "🔓 Beheerder" : "🔒 Beheer";
+  if(state && !isAdmin && tab !== "stand"){ tab = "stand"; }
+}
+function openAdmin(){ adminView = true; render(); scrollTo(0,0); }
+function closeAdmin(){ adminView = false; render(); }
+function viewAdmin(){
+  const has = !!state.adminHash;
+  if(isAdmin) return `<div class="card"><h2>🔓 Je bent beheerder</h2>
+    <p class="small muted">Op dit apparaat kun je alles aanpassen. Anderen met de link zien alleen de stand.</p>
+    <div class="row"><button class="btn" onclick="closeAdmin()">← Terug</button><button class="btn danger" onclick="logout()">Uitloggen</button></div></div>
+    <div class="card"><h2>Wachtwoord wijzigen</h2>
+    <form onsubmit="changePw(event)" class="row"><input type="password" id="pw1" placeholder="Nieuw wachtwoord" autocomplete="new-password" style="flex:1;min-width:140px"><input type="password" id="pw2" placeholder="Herhaal" autocomplete="new-password" style="flex:1;min-width:140px"><button class="btn primary">Opslaan</button></form></div>`;
+  if(!has) return `<div class="card"><h2>Wachtwoord instellen</h2>
+    <p class="small muted">Er is nog geen beheerderswachtwoord. Kies er een; daarna kun alleen jij nog iets aanpassen.</p>
+    <form onsubmit="changePw(event)"><div class="row"><input type="password" id="pw1" placeholder="Wachtwoord" autocomplete="new-password" style="flex:1;min-width:140px"><input type="password" id="pw2" placeholder="Herhaal" autocomplete="new-password" style="flex:1;min-width:140px"></div>
+    <div class="row" style="margin-top:10px"><button type="button" class="btn" onclick="closeAdmin()">Annuleren</button><button class="btn primary" style="flex:1">Instellen</button></div></form></div>`;
+  return `<div class="card"><h2>🔒 Inloggen als beheerder</h2>
+    <form onsubmit="login(event)"><input type="password" id="pw" placeholder="Wachtwoord" autocomplete="current-password" style="width:100%">
+    <div class="row" style="margin-top:10px"><button type="button" class="btn" onclick="closeAdmin()">Annuleren</button><button class="btn primary" style="flex:1">Inloggen</button></div></form>
+    <p class="small muted" style="margin-bottom:0">Je blijft op dit apparaat ingelogd tot je uitlogt.</p></div>`;
+}
+async function login(e){ e.preventDefault(); const h = await hashPw(document.getElementById("pw").value);
+  if(h === state.adminHash){ lsSet(ADMIN_KEY, h); adminView=false; checkAdmin(); tab="aanwezig"; render(); toast("Ingelogd als beheerder"); }
+  else toast("Wachtwoord klopt niet"); }
+function logout(){ lsSet(ADMIN_KEY, null); adminView=false; checkAdmin(); render(); toast("Uitgelogd"); }
+async function changePw(e){ e.preventDefault(); const a=document.getElementById("pw1").value, b=document.getElementById("pw2").value;
+  if(a.length<4){ toast("Minimaal 4 tekens"); return; } if(a!==b){ toast("Wachtwoorden zijn niet gelijk"); return; }
+  const h = await hashPw(a), first = !state.adminHash;
+  const ok = await mutate(s=>{ if(!first && !isAdmin) throw new Error("Geen rechten"); if(first && s.adminHash) throw new Error("Er is intussen al een wachtwoord ingesteld"); s.adminHash = h; }, first?"Wachtwoord ingesteld":"Wachtwoord gewijzigd", true);
+  if(ok){ lsSet(ADMIN_KEY, h); adminView=false; checkAdmin(); if(first) tab="aanwezig"; render(); } }
 
 /* ---------- Stand ---------- */
 function computeStats(s){
@@ -350,6 +396,8 @@ function render(){
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on", b.dataset.tab===tab));
   const app = document.getElementById("app");
   if(!state){ app.innerHTML = `<div class="empty">Laden…</div>`; return; }
+  checkAdmin();
+  if(adminView){ app.innerHTML = viewAdmin(); return; }
   try{
     app.innerHTML = ({aanwezig: viewAanwezig, suggestions: viewTeams, uitslag: viewUitslag, stand: viewStand}[tab])();
   }catch(e){
@@ -628,7 +676,7 @@ function shareUitslag(i){
 }
 
 /* ---------- Acties ---------- */
-function go(t){ tab=t; profileName=null; const u=new URL(location); u.searchParams.set("mode",t); u.searchParams.delete("speler"); window.history.replaceState(null,"",u); render(); scrollTo(0,0); }
+function go(t){ if(!isAdmin) t="stand"; adminView=false; tab=t; profileName=null; const u=new URL(location); u.searchParams.set("mode",t); u.searchParams.delete("speler"); window.history.replaceState(null,"",u); render(); scrollTo(0,0); }
 function togglePresent(i){ const n=state.players[i].name, v=!state.players[i].present; state.players[i].present=v; suggestions=[]; render();
   mutate(s=>{const p=s.players.find(p=>p.name===n); if(p) p.present=v;}); }
 function resetPresence(){ if(!confirm("Iedereen afmelden?")) return; suggestions=[]; mutate(s=>s.players.forEach(p=>p.present=false), "Iedereen afgemeld"); }
@@ -701,6 +749,8 @@ document.getElementById("nav").addEventListener("click", e=>{ const b=e.target.c
 })();
 // Ververs als de app weer in beeld komt (bijv. telefoon uit de zak)
 document.addEventListener("visibilitychange", async ()=>{ if(document.visibilityState==="visible" && state && editIdx===null){ try{ state=await fetchState(); render(); }catch{} } });
+// Op een ander tabblad in- of uitgelogd
+window.addEventListener("storage", e=>{ if(e.key===ADMIN_KEY && state) render(); });
 </script>
 </body>
 </html>
